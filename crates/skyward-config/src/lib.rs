@@ -795,7 +795,7 @@ mod tests {
             (include_str!("../../../devices/zorn.toml"), "OS3.0.309.0.WOKCNXM"),
             (include_str!("../../../devices/miro.toml"), "OS3.0.305.0.WOMCNXM"),
             (include_str!("../../../devices/annibale.toml"), "OS3.0.307.0.WPKCNXM"),
-            (include_str!("../../../devices/warsaw.toml"), "OS3.0.309.0.WHPCNXM"),
+            (include_str!("../../../devices/warsaw.toml"), "OS4.0.8.0.XHPCNXM"),
         ] {
             let stock = DeviceConfig::parse(text).unwrap().stock.expect("a stock build to build on");
             assert_eq!(stock.version, version);
