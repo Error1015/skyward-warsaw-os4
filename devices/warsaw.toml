@@ -76,7 +76,7 @@ server = "https://update.miui.com/updates/miotaV3.php"
 # server holds the recovery partition the recovery is built on top of.
 [stock]
 version = "OS4.0.8.0.XHPCNXM"
-package = "https://ultimateota.d.miui.com/OS4.0.8.0.XHPCNXM/warsaw-ota_full-OS4.0.8.0.XHPCNXM-user-17.0-96194cf12c.zip"
+package = "https://bigota.d.miui.com/OS4.0.8.0.XHPCNXM/warsaw-ota_full-OS4.0.8.0.XHPCNXM-user-17.0-96194cf12c.zip"
 recovery = "600a181d79c95d7155b9241fae15263586af7b527da2e6403c56f1d9834217d3"
 
 # qcom-hv-haptics (qcom,hv-haptics in its dtbo), whose driver says the
