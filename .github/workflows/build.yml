@@ -1,4 +1,4 @@
-name: Build
+name: Skyward Recovery Build
 
 # Every push is linted and tested, and the recovery is built for every
 # device in devices/, each image zipped. A tag starting with v publishes
