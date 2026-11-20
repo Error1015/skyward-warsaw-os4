@@ -4,8 +4,10 @@
 use anyhow::{bail, ensure, Context, Result};
 use serde::Deserialize;
 
-/// Where GitHub answers which release of Skyward is the newest.
-pub const LATEST: &str = "https://api.github.com/repos/kirklin/skyward/releases/latest";
+/// Where GitHub answers which release of Skyward is the newest. This fork
+/// asks its own releases only: upstream's are builds of other phones, and
+/// a recovery written over with one of them would not start this one.
+pub const LATEST: &str = "https://api.github.com/repos/Error1015/skyward-warsaw-os4/releases/latest";
 
 /// The version of GitHub's API the answer is read as.
 const API_VERSION: &str = "2022-11-28";
@@ -78,18 +80,28 @@ pub fn newest(answer: &str, codename: &str, running: &str) -> Result<Newest> {
     let version = tag.strip_prefix('v').with_context(|| format!("the newest release is tagged {tag}, which is not v and a version"))?;
     let newest = semver::Version::parse(version).with_context(|| format!("the newest release is tagged {tag}"))?;
     let this = semver::Version::parse(running).with_context(|| format!("this build's version is {running}"))?;
-    // Each zip is named skyward-, the tag, the phone's codename, and the
-    // stock build the image is made on.
-    let start = format!("skyward-{tag}-{codename}-");
-    let build = match release.assets.into_iter().find(|a| a.name.starts_with(&start) && a.name.ends_with(".zip")) {
+    // This fork's tags carry the phone and the stock build they were made
+    // on, as v0.3.1-warsaw-OS4.0.8.0.XHPCNXM: two releases are told apart
+    // by their version numbers alone, and a build of the same numbers with
+    // its own tail counts as the same one.
+    let newer = (newest.major, newest.minor, newest.patch) > (this.major, this.minor, this.patch);
+    // Each zip is named skyward-, the tag, then the phone's codename and
+    // the stock build, as upstream's are; the fork's name the stock build
+    // alone, without the codename. A zip for the phone comes before its
+    // only zip, and where the release holds several and none names the
+    // phone, it has none for it: a build of another phone is never taken.
+    let start = format!("skyward-{tag}-");
+    let zips: Vec<Asset> = release.assets.into_iter().filter(|a| a.name.starts_with(&start) && a.name.ends_with(".zip")).collect();
+    let own = format!("skyward-{tag}-{codename}-");
+    let build = match zips.iter().find(|a| a.name.starts_with(&own)).or_else(|| (zips.len() == 1).then(|| &zips[0])) {
         None => None,
         Some(a) => {
             let sha256 = a.digest.as_deref().and_then(|d| d.strip_prefix("sha256:")).with_context(|| format!("GitHub gives no SHA-256 of {}", a.name))?;
             ensure!(sha256.len() == 64 && sha256.bytes().all(|b| b.is_ascii_hexdigit()), "GitHub gives {} the SHA-256 {sha256}", a.name);
-            Some(Build { sha256: sha256.to_lowercase(), name: a.name, url: a.url, link: a.browser_download_url, size: a.size })
+            Some(Build { sha256: sha256.to_lowercase(), name: a.name.clone(), url: a.url.clone(), link: a.browser_download_url.clone(), size: a.size })
         }
     };
-    Ok(Newest { version: version.to_string(), newer: newest > this, build })
+    Ok(Newest { version: version.to_string(), newer, build })
 }
 
 /// Ask GitHub for Skyward's newest release, and its zip for the phone
@@ -217,8 +229,22 @@ mod tests {
     fn a_release_is_newer_only_than_an_older_build() {
         assert!(!newest(ANSWERED_013, "ishtar", "0.1.3").unwrap().newer, "the same version");
         assert!(!newest(ANSWERED_013, "ishtar", "0.2.0").unwrap().newer, "a build ahead of every release");
-        assert!(newest(ANSWERED_013, "ishtar", "0.1.3-rc.1").unwrap().newer, "a build before the release it led to");
+        assert!(!newest(ANSWERED_013, "ishtar", "0.1.3-rc.1").unwrap().newer, "a build of the same version's numbers");
         assert!(newest(ANSWERED_013, "ishtar", "0.1").is_err(), "a version this build cannot have");
+    }
+
+    /// What a release of this fork looks like: its tag carries the phone
+    /// and the stock build, and its zip's name carries neither codename.
+    const ANSWERED_FORK: &str = r#"{"tag_name":"v0.3.1-warsaw-OS4.0.8.0.XHPCNXM","name":"v0.3.1-warsaw-OS4.0.8.0.XHPCNXM","draft":false,"prerelease":false,"assets":[{"url":"https://api.github.com/repos/Error1015/skyward-warsaw-os4/releases/assets/452883682","id":452883682,"name":"SHA256SUMS","label":"","content_type":"application/octet-stream","state":"uploaded","size":2337,"digest":"sha256:052f9ca757baeb2eac78c8e546bcc54178f6bb9bf9e5bde53fa81b3f48448957","browser_download_url":"https://github.com/Error1015/skyward-warsaw-os4/releases/download/v0.3.1-warsaw-OS4.0.8.0.XHPCNXM/SHA256SUMS"},{"url":"https://api.github.com/repos/Error1015/skyward-warsaw-os4/releases/assets/452883681","id":452883681,"name":"skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip","label":"","content_type":"application/zip","state":"uploaded","size":45834002,"digest":"sha256:093531ed62739642e45b0801a27e542b52a17d384e7f94235d907c9efe507259","browser_download_url":"https://github.com/Error1015/skyward-warsaw-os4/releases/download/v0.3.1-warsaw-OS4.0.8.0.XHPCNXM/skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip"}]}"#;
+
+    #[test]
+    fn the_fork_s_release_names_its_zip_without_the_codename() {
+        let n = newest(ANSWERED_FORK, "warsaw", "0.3.1").unwrap();
+        assert_eq!(n.version, "0.3.1-warsaw-OS4.0.8.0.XHPCNXM");
+        assert!(!n.newer, "the release the build itself is of");
+        assert_eq!(n.build.unwrap().size, 45_834_002);
+        assert!(newest(ANSWERED_FORK, "warsaw", "0.3.0").unwrap().newer, "a build of the numbers before it");
+        assert!(!newest(ANSWERED_FORK, "warsaw", "0.3.2").unwrap().newer, "a build of the numbers after it");
     }
 
     #[test]
