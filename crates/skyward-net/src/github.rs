@@ -87,11 +87,15 @@ pub fn newest(answer: &str, codename: &str, running: &str) -> Result<Newest> {
     let newer = (newest.major, newest.minor, newest.patch) > (this.major, this.minor, this.patch);
     // Each zip is named skyward-, the tag, then the phone's codename and
     // the stock build, as upstream's are; the fork's name the stock build
-    // alone, without the codename. A zip for the phone comes before its
-    // only zip, and where the release holds several and none names the
-    // phone, it has none for it: a build of another phone is never taken.
-    let start = format!("skyward-{tag}-");
-    let zips: Vec<Asset> = release.assets.into_iter().filter(|a| a.name.starts_with(&start) && a.name.ends_with(".zip")).collect();
+    // alone, right after the tag without a dash. A zip for the phone comes
+    // before its only zip, and where the release holds several and none
+    // names the phone, it has none for it: a build of another phone is
+    // never taken.
+    let start = format!("skyward-{tag}");
+    let named = |name: &str| {
+        name.ends_with(".zip") && name.strip_prefix(&start).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+    };
+    let zips: Vec<Asset> = release.assets.into_iter().filter(|a| named(&a.name)).collect();
     let own = format!("skyward-{tag}-{codename}-");
     let build = match zips.iter().find(|a| a.name.starts_with(&own)).or_else(|| (zips.len() == 1).then(|| &zips[0])) {
         None => None,
@@ -242,9 +246,16 @@ mod tests {
         let n = newest(ANSWERED_FORK, "warsaw", "0.3.1").unwrap();
         assert_eq!(n.version, "0.3.1-warsaw-OS4.0.8.0.XHPCNXM");
         assert!(!n.newer, "the release the build itself is of");
+        assert_eq!(n.build.as_ref().unwrap().name, "skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip");
         assert_eq!(n.build.unwrap().size, 45_834_002);
         assert!(newest(ANSWERED_FORK, "warsaw", "0.3.0").unwrap().newer, "a build of the numbers before it");
         assert!(!newest(ANSWERED_FORK, "warsaw", "0.3.2").unwrap().newer, "a build of the numbers after it");
+    }
+
+    #[test]
+    fn a_zip_of_a_longer_tag_is_not_the_release_s() {
+        let answer = ANSWERED_FORK.replace("\"tag_name\":\"v0.3.1-warsaw-OS4.0.8.0.XHPCNXM\"", "\"tag_name\":\"v0.3.0\"");
+        assert_eq!(newest(&answer, "warsaw", "0.3.0").unwrap().build, None, "skyward-v0.3.1-… is no skyward-v0.3.0 zip");
     }
 
     #[test]
