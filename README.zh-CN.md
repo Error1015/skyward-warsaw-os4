@@ -103,42 +103,17 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
 | 机型 | 代号 | 测试的系统版本 |
 | --- | --- | --- |
-| 小米 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM（Android 17） |
-| 小米 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM（Android 16） |
-| REDMI K90 Ultra | `warsaw` | OS4.0.8.0.XHPCNXM（Android 17），本仓库维护 |
+| REDMI K90 Ultra | `warsaw` | OS4.0.8.0.XHPCNXM（Android 17） |
 
-### 🚧 施工中
-
-这些机型的镜像按照各自的原厂固件构建，还没有在真机上试过。屏幕、触摸、WLAN 和振动已经配置好。解密 data 分区所需的程序由 Skyward 在手机上从已安装系统的 init 脚本和服务描述中读出，每个机型的读取结果都用原厂固件核对过，这些程序在这些机型上的运行情况还没有验证。
-
-| 机型 | 代号 | 构建所用的系统版本 |
-| --- | --- | --- |
-| 🚧 小米 13 | `fuxi` | OS3.0.309.0.WMCCNXM（Android 16） |
-| 🚧 小米 13 Pro | `nuwa` | OS3.0.312.0.WMBCNXM（Android 16） |
-| 🚧 小米 14 | `houji` | OS3.0.307.0.WNCCNXM（Android 16） |
-| 🚧 小米 14 Pro | `shennong` | OS3.0.309.0.WNBCNXM（Android 16） |
-| 🚧 小米 14 Ultra | `aurora` | OS3.0.308.0.WNACNXM（Android 16） |
-| 🚧 小米 15 | `dada` | OS3.0.307.0.WOCCNXM（Android 16） |
-| 🚧 小米 15 Pro | `haotian` | OS3.0.309.0.WOBCNXM（Android 16） |
-| 🚧 小米 15 Ultra | `xuanyuan` | OS3.0.314.0.WOACNXM（Android 16） |
-| 🚧 小米 17 | `pudding` | OS4.0.4.0.XPCCNXM（Android 17） |
-| 🚧 小米 17 Pro | `pandora` | OS4.0.4.0.XBLCNXM（Android 17） |
-| 🚧 小米 17 Pro Max | `popsicle` | OS4.0.4.0.XPBCNXM（Android 17） |
-| 🚧 小米 17 Max | `byron` | OS3.0.310.0.WAFCNXM（Android 16） |
-| 🚧 REDMI K80 | `zorn` | OS3.0.309.0.WOKCNXM（Android 16） |
-| 🚧 REDMI K80 Pro | `miro` | OS3.0.305.0.WOMCNXM（Android 16） |
-| 🚧 REDMI K90 | `annibale` | OS3.0.307.0.WPKCNXM（Android 16） |
-| 🚧 REDMI K90 Pro Max | `myron` | OS4.0.4.0.XPMCNXM（Android 17） |
-| 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM（Android 17） |
-| 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
+这个仓库只维护这一台机型：`devices/` 下只有它的配置，机型的快照、测试和构建也只按它来做。上游支持的其他机型见 [kirklin/skyward](https://github.com/kirklin/skyward)。
 
 ## 安装 Skyward
 
-Skyward 需要已解锁的 bootloader。从 [Releases](https://github.com/kirklin/skyward/releases) 下载对应机型的 zip，每个文件都标有机型和代号，例如 Xiaomi 17 Ultra (nezha)。使用 `SHA256SUMS` 核对并解压之后，在手机处于 fastboot 模式的时候，把其中的镜像刷入当前运行槽位的 recovery 分区：
+Skyward 需要已解锁的 bootloader。镜像从这个仓库的 [Releases](https://github.com/Error1015/skyward-warsaw-os4/releases) 下载，文件名标明机型、代号和构建所用的系统版本。使用 `SHA256SUMS` 核对并解压之后，在手机处于 fastboot 模式的时候，把其中的镜像刷入当前运行槽位的 recovery 分区：
 
 ```sh
-unzip skyward-v0.3.1-nezha-OS4.0.4.0.XPACNXM.zip
-fastboot flash recovery skyward-v0.3.1-nezha-OS4.0.4.0.XPACNXM.img
+unzip skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip
+fastboot flash recovery skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.img
 fastboot reboot recovery
 ```
 
@@ -183,21 +158,21 @@ RUSTFLAGS="-C target-feature=+crt-static" cargo ndk -t arm64-v8a --platform 30 b
 打包工具从小米服务器上这个版本的完整更新包中取出原厂 recovery 分区，只读取这个分区所在的部分，并且按照设备配置文件核对 SHA-256：
 
 ```sh
-target/release/skyward-pack stock --config devices/nezha.toml --out target/stock/nezha/recovery.img
+target/release/skyward-pack stock --config devices/warsaw.toml --out target/stock/warsaw/recovery.img
 ```
 
 然后在它的基础上构建镜像：
 
 ```sh
 target/release/skyward-pack recovery \
-  --stock target/stock/nezha/recovery.img \
+  --stock target/stock/warsaw/recovery.img \
   --binary target/aarch64-linux-android/release/skyward \
   --system-init target/system-init/aarch64-linux-android/release/system-init \
-  --config devices/nezha.toml \
+  --config devices/warsaw.toml \
   --font resources/fonts/MiSansVF.ttf \
   --mono resources/fonts/KirkMono-Regular.ttf \
   --mono-license resources/fonts/KirkMono-OFL.txt \
-  --out target/skyward-nezha.img
+  --out target/skyward-warsaw.img
 ```
 
 在没有 unix 环境的 Windows 上，`skyward-pack` 依赖的 `skyward-block` 编译不过，可以改用 `tools/pack_warsaw.py` 打包同一个镜像：先按上面的命令用 NDK 交叉编译出 `skyward` 和 `skyward-system-init`，再给出原厂 recovery 分区、配置文件与 `lz4` 的位置：

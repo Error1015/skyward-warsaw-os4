@@ -133,51 +133,23 @@ read and set properties.
 
 | Device | Codename | Tested system version |
 | --- | --- | --- |
-| Xiaomi 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM (Android 17) |
-| Xiaomi 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM (Android 16) |
-| REDMI K90 Ultra | `warsaw` | OS4.0.8.0.XHPCNXM (Android 17), kept in this fork |
+| REDMI K90 Ultra | `warsaw` | OS4.0.8.0.XHPCNXM (Android 17) |
 
-### 🚧 Under construction
-
-These images are built from each phone's stock firmware and have not been tried
-on the phone. They set up the screen, touch, Wi-Fi and vibration. The programs that
-decrypting the data partition takes are read on the phone from the installed
-system's own init scripts and service descriptions; what is read has been checked
-against each model's stock firmware, and how those programs run on these models has
-not been verified.
-
-| Device | Codename | Built on |
-| --- | --- | --- |
-| 🚧 Xiaomi 13 | `fuxi` | OS3.0.309.0.WMCCNXM (Android 16) |
-| 🚧 Xiaomi 13 Pro | `nuwa` | OS3.0.312.0.WMBCNXM (Android 16) |
-| 🚧 Xiaomi 14 | `houji` | OS3.0.307.0.WNCCNXM (Android 16) |
-| 🚧 Xiaomi 14 Pro | `shennong` | OS3.0.309.0.WNBCNXM (Android 16) |
-| 🚧 Xiaomi 14 Ultra | `aurora` | OS3.0.308.0.WNACNXM (Android 16) |
-| 🚧 Xiaomi 15 | `dada` | OS3.0.307.0.WOCCNXM (Android 16) |
-| 🚧 Xiaomi 15 Pro | `haotian` | OS3.0.309.0.WOBCNXM (Android 16) |
-| 🚧 Xiaomi 15 Ultra | `xuanyuan` | OS3.0.314.0.WOACNXM (Android 16) |
-| 🚧 Xiaomi 17 | `pudding` | OS4.0.4.0.XPCCNXM (Android 17) |
-| 🚧 Xiaomi 17 Pro | `pandora` | OS4.0.4.0.XBLCNXM (Android 17) |
-| 🚧 Xiaomi 17 Pro Max | `popsicle` | OS4.0.4.0.XPBCNXM (Android 17) |
-| 🚧 Xiaomi 17 Max | `byron` | OS3.0.310.0.WAFCNXM (Android 16) |
-| 🚧 REDMI K80 | `zorn` | OS3.0.309.0.WOKCNXM (Android 16) |
-| 🚧 REDMI K80 Pro | `miro` | OS3.0.305.0.WOMCNXM (Android 16) |
-| 🚧 REDMI K90 | `annibale` | OS3.0.307.0.WPKCNXM (Android 16) |
-| 🚧 REDMI K90 Pro Max | `myron` | OS4.0.4.0.XPMCNXM (Android 17) |
-| 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM (Android 17) |
-| 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
+This fork keeps this one device: `devices/` holds its configuration alone, and
+the snapshots, tests and builds are made for it alone. The other devices the
+upstream project supports are in [kirklin/skyward](https://github.com/kirklin/skyward).
 
 ## Installing Skyward
 
-Skyward needs an unlocked bootloader. Download the zip for your phone from
-[Releases](https://github.com/kirklin/skyward/releases), where each shows as the
-phone's model and codename, such as Xiaomi 17 Ultra (nezha). Check it against
-`SHA256SUMS`, unzip it, and flash the image inside to the recovery partition of
-the slot the phone runs from, with the phone in fastboot mode:
+Skyward needs an unlocked bootloader. The image is published on this
+repository's [Releases](https://github.com/Error1015/skyward-warsaw-os4/releases),
+each file naming the phone, its codename and the system build it is made on.
+Check it against `SHA256SUMS` and unpack it, then, with the phone in fastboot
+mode, flash the image to the recovery partition of the slot it runs from:
 
 ```sh
-unzip skyward-v0.3.1-nezha-OS4.0.4.0.XPACNXM.zip
-fastboot flash recovery skyward-v0.3.1-nezha-OS4.0.4.0.XPACNXM.img
+unzip skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip
+fastboot flash recovery skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.img
 fastboot reboot recovery
 ```
 
@@ -265,21 +237,21 @@ package on Xiaomi's server, reading only the part of the package the partition i
 in, and checks its SHA-256 against the device file:
 
 ```sh
-target/release/skyward-pack stock --config devices/nezha.toml --out target/stock/nezha/recovery.img
+target/release/skyward-pack stock --config devices/warsaw.toml --out target/stock/warsaw/recovery.img
 ```
 
 Then it builds the image on top of it:
 
 ```sh
 target/release/skyward-pack recovery \
-  --stock target/stock/nezha/recovery.img \
+  --stock target/stock/warsaw/recovery.img \
   --binary target/aarch64-linux-android/release/skyward \
   --system-init target/system-init/aarch64-linux-android/release/system-init \
-  --config devices/nezha.toml \
+  --config devices/warsaw.toml \
   --font resources/fonts/MiSansVF.ttf \
   --mono resources/fonts/KirkMono-Regular.ttf \
   --mono-license resources/fonts/KirkMono-OFL.txt \
-  --out target/skyward-nezha.img
+  --out target/skyward-warsaw.img
 ```
 
 On Windows, where the workspace has no unix host and `skyward-block`, which

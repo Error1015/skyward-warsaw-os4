@@ -143,7 +143,7 @@ fn main() -> Result<()> {
         eprintln!("axis {tag}: {min}..{max} (default {def})");
     }
 
-    let cfg = DeviceConfig::load(root.join("devices/nezha.toml"))?;
+    let cfg = DeviceConfig::load(root.join("devices/warsaw.toml"))?;
     let (w, h) = (cfg.display.width, cfg.display.height);
     let ppd = cfg.display.density as f32 / 160.0;
     let light = Theme::light(w, h, ppd);
@@ -162,7 +162,7 @@ fn main() -> Result<()> {
         _ => {}
     }
 
-    let info = nezha(&cfg);
+    let info = warsaw(&cfg);
     let pending = DeviceInfo { snapshot: SnapshotState::Snapshotted, ..info.clone() };
     let pattern = Data::Locked { user: 0, keys: Keys::Pattern, checking: false };
     // Whole pages, the way a long screenshot shows them. The About page's
@@ -1448,13 +1448,13 @@ fn router_link() -> Link {
     }
 }
 
-/// A newer system than the 17 Ultra's own, as the update server tells of
+/// A newer system than the K90 Ultra's own, as the update server tells of
 /// one.
 fn newest() -> Release {
     Release {
-        version: "OS4.0.6.0.XPACNXM".into(),
-        name: "nezha-ota_full-OS4.0.6.0.XPACNXM-user-17.0-3f2a9c81d4.zip".into(),
-        urls: vec!["https://ultimateota.d.miui.com/OS4.0.6.0.XPACNXM/nezha-ota_full-OS4.0.6.0.XPACNXM-user-17.0-3f2a9c81d4.zip".into()],
+        version: "OS4.0.9.0.XHPCNXM".into(),
+        name: "warsaw-ota_full-OS4.0.9.0.XHPCNXM-user-17.0-3f2a9c81d4.zip".into(),
+        urls: vec!["https://bigota.d.miui.com/OS4.0.9.0.XHPCNXM/warsaw-ota_full-OS4.0.9.0.XHPCNXM-user-17.0-3f2a9c81d4.zip".into()],
         md5: "3f2a9c81d4e05b7a6c1e9d2f8b7a6c5d".into(),
         size: "7.1G".into(),
         length: Some(7_572_375_802),
@@ -1468,17 +1468,17 @@ fn online(app: &mut App) {
 }
 
 /// A newer release of Skyward than the one running, as GitHub tells of it,
-/// with its zip for the 17 Ultra.
+/// with its zip for the K90 Ultra.
 fn skyward_newest() -> Newest {
     Newest {
-        version: "0.1.4".into(),
+        version: "0.3.1".into(),
         newer: true,
         build: Some(Build {
-            name: "skyward-v0.1.4-nezha-OS4.0.4.0.XPACNXM.zip".into(),
-            url: "https://api.github.com/repos/kirklin/skyward/releases/assets/719751747".into(),
-            link: "https://github.com/kirklin/skyward/releases/download/v0.1.4/skyward-v0.1.4-nezha-OS4.0.4.0.XPACNXM.zip".into(),
-            size: 43_145_196,
-            sha256: "9f6165079529418d8f6635beddfdd9abf9a70c89d69eb467a9922b0db69bfaf1".into(),
+            name: "skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip".into(),
+            url: "https://api.github.com/repos/Error1015/skyward-warsaw-os4/releases/assets/452883681".into(),
+            link: "https://github.com/Error1015/skyward-warsaw-os4/releases/download/v0.3.1-warsaw-OS4.0.8.0.XHPCNXM/skyward-v0.3.1-warsaw-OS4.0.8.0.XHPCNXM.zip".into(),
+            size: 45_834_002,
+            sha256: "d324cb342851b64769c16da0131bf81a56bc372d7ca69a066ba9ba5d0adb8304".into(),
         }),
     }
 }
@@ -1530,18 +1530,18 @@ fn whole_page(app: &mut App, f: &Fonts, info: &DeviceInfo) -> Canvas {
     c
 }
 
-/// Xiaomi 17 Ultra by Leica as `skyward info` read it on 2026-10-18 (the
-/// config supplies the SoC name, panel and screen size).
-fn nezha(cfg: &DeviceConfig) -> DeviceInfo {
+/// REDMI K90 Ultra as `skyward info` reads it (the config supplies the SoC
+/// name, panel and screen size).
+fn warsaw(cfg: &DeviceConfig) -> DeviceInfo {
     DeviceInfo {
-        model: "Xiaomi 17 Ultra by Leica".into(),
+        model: "REDMI K90 Ultra".into(),
         codename: cfg.device.codename.clone(),
         soc: cfg.device.soc.clone(),
         cpu: Cpu { cores: 8, max_khz: Some(4_608_000) },
         ram_kib: 15_472_464,
         panel: Some((cfg.display.width, cfg.display.height)),
         screen: cfg.display.diagonal,
-        os_version: Some("OS4.0.4.0.XPACNXM".into()),
+        os_version: Some("OS4.0.8.0.XHPCNXM".into()),
         android: Some("17".into()),
         locale: Some("zh-CN".into()),
         security_patch: Some(PatchLevel { year: 2026, month: 10, day: 1 }),
