@@ -15,6 +15,7 @@ use crate::systems;
 use crate::updates;
 use crate::wipe::{self, Eraser, Step};
 use crate::wlan;
+use crate::ksu;
 use anyhow::{anyhow, ensure, Context, Result};
 use skyward_block::fsck::Fixed;
 use skyward_block::{fstab, mount, probe};
@@ -2641,6 +2642,16 @@ impl Pages<'_> {
                 let slot = self.info.slot.context("only an A/B phone merges an update")?;
                 skyward_sys::kmsg("merging the update, as the update page asked")?;
                 self.merger = Some(merge::Merger::start(slot, true)?);
+            }
+            Effect::ReadModules => self.app.set_modules(ksu::read()),
+            Effect::SetModule { id, on } => {
+                match ksu::set(&id, on) {
+                    Ok(()) => self.app.set_modules(ksu::read()),
+                    Err(e) => {
+                        skyward_sys::kmsg(&format!("switching the KernelSU module {id} failed: {e:#}"))?;
+                        self.app.report(&format!("{e:#}"), now);
+                    }
+                }
             }
             Effect::Wlan(on) => wlan_worker(&self.wlan)?.send(if on { wlan::Command::On } else { wlan::Command::Off }),
             Effect::ScanWlan => {

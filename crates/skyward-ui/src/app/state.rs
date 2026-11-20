@@ -98,6 +98,9 @@ pub struct State {
     /// Why the second system's start stopped, as its first program told
     /// it, which the systems page shows.
     pub system_notice: Option<String>,
+    /// KernelSU's modules, as the runtime last read them, or why it
+    /// could not; none until it has.
+    pub modules: Option<Result<Vec<KsuModule>, String>>,
     /// Where the data partition stands, and what is typed at the screen
     /// lock its users' own files wait on.
     pub data: Data,
@@ -228,6 +231,7 @@ impl Default for State {
             system_pick: None,
             systems_work: None,
             system_notice: None,
+            modules: None,
             data: Data::Closed,
             code: String::new(),
             search: String::new(),

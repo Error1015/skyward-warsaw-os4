@@ -83,7 +83,7 @@ pub enum Install {
     /// `overwriting` says whether the update writes over the running
     /// system.
     Updating { version: Option<String>, stage: Option<Stage>, overwriting: bool },
-    Flashing { partition: &'static str, stage: Option<Stage> },
+    Flashing { partition: String, stage: Option<Stage> },
     /// A zip with an install script waits for the user to agree to run it.
     ConfirmingScript,
     /// A system to install beside the installed one waits for the room its
@@ -106,12 +106,12 @@ pub enum Install {
 }
 
 /// What a failed install may have left broken.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Damage {
     /// The update had begun writing over the running system.
     System,
     /// The image had begun going into this partition.
-    Partition(&'static str),
+    Partition(String),
     /// The install script had begun to run, and may have written to any
     /// partition.
     Script,
@@ -122,11 +122,20 @@ pub enum Damage {
 pub struct Choice {
     pub kind: ImageKind,
     pub size: u64,
-    /// The partitions it fits, the likeliest first.
-    pub partitions: Vec<&'static str>,
+    /// The partitions that may be written: those the image fits, the
+    /// likeliest first, then every partition both slots of the phone keep,
+    /// by name.
+    pub partitions: Vec<String>,
+    /// Each partition's size, by its place in [`Choice::partitions`].
+    pub sizes: Vec<u64>,
+    /// How many of [`Choice::partitions`] the image fits; the rest show
+    /// once the list of them is opened.
+    pub fits: usize,
     /// Which of them is chosen.
     pub partition: usize,
     pub pick: Pick,
+    /// The partitions past the ones the image fits are shown.
+    pub expanded: bool,
 }
 
 impl App {
@@ -235,8 +244,8 @@ impl App {
                     *overwriting = true;
                 }
             }
-            Event::Image { kind, size, partitions } => {
-                *install = Install::Choosing(Choice { kind, size, partitions, partition: 0, pick: Pick::Current })
+            Event::Image { kind, size, partitions, sizes, fits } => {
+                *install = Install::Choosing(Choice { kind, size, partitions, sizes, fits, partition: 0, pick: Pick::Current, expanded: false })
             }
             Event::Script => *install = Install::ConfirmingScript,
             Event::System { name, version, sizes } => *install = Install::SystemChoosing(SystemChoice { name, version, sizes, size: 0 }),
@@ -265,7 +274,7 @@ impl App {
                 let damage = match (&outcome, &*install) {
                     (Outcome::Failed(_), Install::Updating { overwriting: true, .. }) => Some(Damage::System),
                     (Outcome::Failed(_), Install::Flashing { partition, stage: Some(Stage::Flashing { done, .. }) }) if *done > 0 => {
-                        Some(Damage::Partition(partition))
+                        Some(Damage::Partition(partition.clone()))
                     }
                     (Outcome::Failed(_), Install::Scripting { running: true, .. }) => Some(Damage::Script),
                     _ => None,
@@ -344,7 +353,9 @@ mod tests {
         let mut app = sideloading(&f, &i);
         app.install(Event::Checking { size: 201_326_592 }, 0);
         let kind = ImageKind::Boot { kernel: true, ramdisk: skyward_install::Ramdisk::Recovery };
-        app.install(Event::Image { kind, size: 201_326_592, partitions: vec!["recovery", "boot"] }, 0);
+        let partitions = || vec!["recovery".into(), "boot".into(), "vendor_boot".into()];
+        let sizes = || vec![64 << 20, 100 << 20, 200 << 20];
+        app.install(Event::Image { kind, size: 201_326_592, partitions: partitions(), sizes: sizes(), fits: 2 }, 0);
         // The image lit the panel, so the user looks and taps past the wake
         // guard.
         tap_at(&mut app, &f, &i, Action::FlashPartition(1), 1000);
@@ -353,13 +364,13 @@ mod tests {
         let y = track.centre().1 - app.top().1;
         app.touch(Touch::Down(track.x + track.h / 2.0, y), &f, 1000);
         app.touch(Touch::Move(track.x + track.w, y), &f, 1000);
-        assert_eq!(app.touch(Touch::Up, &f, 1000), vec![Effect::Flash { partition: "boot", pick: Pick::Both }]);
-        assert_eq!(app.state.install, Install::Flashing { partition: "boot", stage: None });
+        assert_eq!(app.touch(Touch::Up, &f, 1000), vec![Effect::Flash { partition: "boot".into(), pick: Pick::Both }]);
+        assert_eq!(app.state.install, Install::Flashing { partition: "boot".into(), stage: None });
         app.install(Event::Progress(Stage::Flashing { done: 10, total: 40 }), 1000);
-        assert_eq!(app.state.install, Install::Flashing { partition: "boot", stage: Some(Stage::Flashing { done: 10, total: 40 }) });
+        assert_eq!(app.state.install, Install::Flashing { partition: "boot".into(), stage: Some(Stage::Flashing { done: 10, total: 40 }) });
         app.key(Key::Back, 1000);
         assert_eq!(app.screen(), Screen::Installing, "a partition being written keeps the page");
-        app.install(Event::Finished(Outcome::Flashed { partition: "boot", slots: vec![Slot::A, Slot::B] }), 1000);
+        app.install(Event::Finished(Outcome::Flashed { partition: "boot".into(), slots: vec![Slot::A, Slot::B] }), 1000);
         assert!(matches!(app.state.install, Install::Finished { damage: None, .. }), "a flash that worked broke nothing");
         assert_eq!(tap_at(&mut app, &f, &i, Action::RebootTo(Target::System), 2000), vec![Effect::Reboot(Target::System)]);
         app.key(Key::Back, 2000);
@@ -407,11 +418,11 @@ mod tests {
     fn an_image_that_failed_part_way_names_its_partition() {
         let (f, i) = (fonts(), info());
         let mut app = sideloading(&f, &i);
-        app.install(Event::Image { kind: ImageKind::Dtbo, size: 1 << 20, partitions: vec!["dtbo"] }, 0);
-        app.state.install = Install::Flashing { partition: "dtbo", stage: None };
+        app.install(Event::Image { kind: ImageKind::Dtbo, size: 1 << 20, partitions: vec!["dtbo".into()], sizes: vec![4 << 20], fits: 1 }, 0);
+        app.state.install = Install::Flashing { partition: "dtbo".into(), stage: None };
         app.install(Event::Progress(Stage::Flashing { done: 1 << 20, total: 4 << 20 }), 0);
         app.install(Event::Finished(Outcome::Failed(Failure::Disconnected)), 0);
-        assert!(matches!(app.state.install, Install::Finished { damage: Some(Damage::Partition("dtbo")), .. }));
+        assert!(matches!(app.state.install, Install::Finished { damage: Some(Damage::Partition(p)), .. } if p == "dtbo"));
     }
 
     #[test]

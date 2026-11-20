@@ -92,8 +92,11 @@ pub enum Event {
     /// start.
     Overwriting,
     /// A partition image, held until [`Command::Flash`] says where it goes:
-    /// the partitions of this phone it fits, the likeliest first.
-    Image { kind: ImageKind, size: u64, partitions: Vec<&'static str> },
+    /// the partitions of this phone it fits, the likeliest first, then
+    /// every partition both slots keep, with each one's size, for the
+    /// chooser to open once it is asked to; `fits` says how many of the
+    /// first kind there are.
+    Image { kind: ImageKind, size: u64, partitions: Vec<String>, sizes: Vec<u64>, fits: usize },
     /// A zip that installs itself by running the script inside it, held
     /// until [`Command::Install`]: a script may write over any partition,
     /// so it always waits.
@@ -168,7 +171,7 @@ pub enum Outcome {
     /// is to be erased before it does.
     Installed { slot: Slot, wipe: bool },
     /// The image is in the partition of these slots.
-    Flashed { partition: &'static str, slots: Vec<Slot> },
+    Flashed { partition: String, slots: Vec<Slot> },
     /// The install script ran to its end; `wipe_cache` when it asked for
     /// the cache partition to be erased after.
     Ran { wipe_cache: bool },
@@ -269,7 +272,7 @@ pub enum Failure {
 pub enum Command {
     /// Write the image held in [`Event::Image`] to `partition` in these
     /// slots.
-    Flash { partition: &'static str, slots: Vec<Slot> },
+    Flash { partition: String, slots: Vec<Slot> },
     /// Install the update held in [`Event::Ready`], or run the script held
     /// in [`Event::Script`].
     Install,

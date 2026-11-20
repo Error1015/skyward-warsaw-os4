@@ -45,6 +45,12 @@ pub const ENTRIES: &[Entry] = &[
     entry(["清除数据", "清除資料", "Wipe data"], HOME, Screen::Wipe, &["qingchushuju", "qcsj", "wipe", "format", "geshihua", "gsh"]),
     entry(ADVANCED, HOME, Screen::Advanced, &["gaoji", "gj", "advanced"]),
     entry(["文件管理", "檔案管理", "File manager"], ADVANCED, Screen::Files, &["wenjianguanli", "wjgl", "files", "file"]),
+    entry(
+        ["KernelSU 模块", "KernelSU 模組", "KernelSU modules"],
+        ADVANCED,
+        Screen::Modules,
+        &["kernelsumokuai", "ksu", "mokuai", "mk", "module", "modules", "magisk", "root"],
+    ),
     entry(["终端", "終端機", "Terminal"], ADVANCED, Screen::Terminal, &["zhongduan", "zd", "terminal", "shell"]),
     entry(
         ["修复 SELinux 上下文", "修復 SELinux 上下文", "Fix SELinux contexts"],

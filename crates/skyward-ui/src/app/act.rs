@@ -116,6 +116,19 @@ impl App {
                     self.refresh();
                 }
             }
+            Action::ExpandPartitions => {
+                if let Install::Choosing(choice) = &mut self.state.install {
+                    choice.expanded = !choice.expanded;
+                    self.refresh();
+                }
+            }
+            Action::ToggleModule(k) => {
+                let asked = match &self.state.modules {
+                    Some(Ok(modules)) => modules.get(k).map(|m| Effect::SetModule { id: m.id.clone(), on: !m.enabled }),
+                    _ => None,
+                };
+                return asked.map(|fx| vec![fx]).unwrap_or_default();
+            }
             Action::FlashSlots(pick) => {
                 if let Install::Choosing(choice) = &mut self.state.install {
                     choice.pick = pick;
@@ -801,8 +814,8 @@ impl App {
             }
             Confirm::Flash => {
                 if let Install::Choosing(choice) = &self.state.install {
-                    let partition = choice.partitions[choice.partition];
-                    fx.push(Effect::Flash { partition, pick: choice.pick });
+                    let partition = choice.partitions[choice.partition].clone();
+                    fx.push(Effect::Flash { partition: partition.clone(), pick: choice.pick });
                     self.state.install = Install::Flashing { partition, stage: None };
                     self.refresh();
                 }

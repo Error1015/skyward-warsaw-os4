@@ -43,6 +43,7 @@ mod frame;
 mod input;
 mod install;
 mod keys;
+mod ksu;
 mod manager;
 mod mount;
 mod nav;
@@ -67,6 +68,7 @@ pub use entry::*;
 pub use filesystem::*;
 pub use frame::*;
 pub use install::*;
+pub use ksu::*;
 pub use manager::*;
 pub use mount::*;
 pub use prefs::*;
@@ -154,6 +156,9 @@ pub enum Screen {
     /// The installed system and the one Skyward installed beside it: which
     /// of them starts, switching between them, and taking the other away.
     Systems,
+    /// KernelSU's modules in the data partition, each with a switch to
+    /// start it with the system or leave it out.
+    Modules,
     /// The phone's own fastbootd serving the computer's fastboot, and where
     /// to go from it. Its only page, worked with the keys: the partitions
     /// the touchscreen runs from are left out while fastbootd rewrites
@@ -253,6 +258,12 @@ pub enum Action {
     Sideload,
     /// Send the image to one of the partitions it fits.
     FlashPartition(usize),
+    /// Open or fold away the list of the phone's other partitions, the
+    /// ones the image need not fit.
+    ExpandPartitions,
+    /// Turn the KernelSU module at this place in the modules page's list
+    /// on or off.
+    ToggleModule(usize),
     /// Send the image to these slots.
     FlashSlots(Pick),
     /// Leave the recovery for this target at once.
@@ -447,7 +458,7 @@ pub enum Effect {
     InstallPath(String),
     /// Write the image the installer holds to `partition` in the slots
     /// `pick` means.
-    Flash { partition: &'static str, pick: Pick },
+    Flash { partition: String, pick: Pick },
     /// Stop waiting for the computer, for where an image goes, or for an
     /// update to be agreed to.
     Cancel,
@@ -597,6 +608,13 @@ pub enum Effect {
     /// Merge the update that waits in the slot the phone runs from,
     /// telling how it goes with [`App::set_update`].
     Merge,
+    /// Read KernelSU's modules for the modules page, telling them with
+    /// [`App::set_modules`].
+    ReadModules,
+    /// Make or take away the file that keeps the KernelSU module `id`
+    /// from starting, then read the modules again, telling them with
+    /// [`App::set_modules`].
+    SetModule { id: String, on: bool },
 }
 
 enum Drag {

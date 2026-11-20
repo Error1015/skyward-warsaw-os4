@@ -132,7 +132,7 @@ impl Installer {
     }
 
     /// Write the image the installer holds to `partition` in `slots`.
-    pub fn flash(&self, partition: &'static str, slots: Vec<Slot>) {
+    pub fn flash(&self, partition: String, slots: Vec<Slot>) {
         // Only a finished installer stops listening, and then there is
         // nothing left to write.
         let _ = self.commands.send(Command::Flash { partition, slots });
@@ -780,22 +780,32 @@ fn lines(from: impl Read, mut each: impl FnMut(&str) -> io::Result<()>) -> io::R
 
 fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
     let dir = Path::new(skyward_block::BY_NAME);
-    let partitions = image::partitions(kind, dir)?;
-    if partitions.is_empty() {
+    let fits = image::partitions(kind, dir)?;
+    if fits.is_empty() {
         return Ok(Done::Decided(Outcome::Refused(Refusal::NoPartition)));
     }
-    ctx.send(Event::Image { kind, size, partitions: partitions.clone() });
+    // Every partition both slots keep may be written to by hand, whether
+    // the image fits it or not: the chooser holds the fitting ones first
+    // and opens the rest once it is asked to.
+    let mut partitions: Vec<String> = fits.iter().map(|p| p.to_string()).collect();
+    let mut sizes: Vec<u64> = partitions.iter().map(|p| skyward_block::size_bytes(image::device(dir, p, Slot::A))).collect::<Result<_>>()?;
+    for (name, size) in every_partition(dir, &fits)? {
+        partitions.push(name);
+        sizes.push(size);
+    }
+    let fits = fits.len();
+    ctx.send(Event::Image { kind, size, partitions: partitions.clone(), sizes, fits });
     let (partition, slots) = match ctx.commands.recv() {
         Ok(Command::Flash { partition, slots }) => (partition, slots),
         Ok(Command::Cancel) | Err(_) => return Ok(Done::Decided(Outcome::Cancelled)),
         Ok(other) => bail!("an image waiting for its partition was told {other:?}"),
     };
-    ensure!(partitions.contains(&partition), "{partition} is not among {partitions:?}");
+    ensure!(partitions.contains(&partition), "{partition} is not a partition of this phone");
     ensure!(!slots.is_empty(), "no slot chosen for {partition}");
-    if [skyward_systems::store::BOOT, skyward_systems::store::INIT_BOOT].contains(&partition) {
+    if partition == skyward_systems::store::BOOT || partition == skyward_systems::store::INIT_BOOT {
         installed_boot_set()?;
     }
-    let devices: Vec<_> = slots.iter().map(|&slot| image::device(dir, partition, slot)).collect();
+    let devices: Vec<_> = slots.iter().map(|&slot| image::device(dir, &partition, slot)).collect();
     let mut file = BufReader::with_capacity(1 << 20, File::open(fuse::PACKAGE).context("open the package")?);
     let mut told: Option<Instant> = None;
     image::flash(&mut file, size, &devices, &mut |done, total| {
@@ -805,6 +815,24 @@ fn flash_image(ctx: &Context, kind: ImageKind, size: u64) -> Result<Done> {
         }
     })?;
     Ok(Done::Decided(Outcome::Flashed { partition, slots }))
+}
+
+/// Every partition of the phone that both slots keep, among the links in
+/// `dir`, by its name and its size, in the order by-name lists them, less
+/// those `kept` names.
+fn every_partition(dir: &Path, kept: &[&str]) -> Result<Vec<(String, u64)>> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).with_context(|| format!("look in {}", dir.display()))? {
+        let path = entry.with_context(|| format!("look in {}", dir.display()))?.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(base) = name.strip_suffix(&Slot::A.suffix()) else { continue };
+        if kept.contains(&base) || !dir.join(format!("{base}{}", Slot::B.suffix())).try_exists()? {
+            continue;
+        }
+        found.push((base.to_string(), skyward_block::size_bytes(&path)?));
+    }
+    found.sort();
+    Ok(found)
 }
 
 /// Run the install script of the zip being served, `size` bytes, once the

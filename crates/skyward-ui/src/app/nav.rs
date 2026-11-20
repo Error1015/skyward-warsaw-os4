@@ -288,6 +288,10 @@ impl App {
             Screen::Filesystems => vec![Effect::ReadFilesystems],
             Screen::Slot | Screen::Reboot => vec![Effect::ReadSlots],
             Screen::Systems => vec![Effect::ReadSystems],
+            // KernelSU's folder is no user's own files, so the partition
+            // being open, with a user's own files still locked, is enough
+            // to read it.
+            Screen::Modules if matches!(self.state.data, Data::Open | Data::Locked { .. }) && self.state.modules.is_none() => vec![Effect::ReadModules],
             Screen::Restore => vec![self.find_backups()],
             Screen::Files => vec![Effect::ReadDir(self.state.files.path.clone())],
             Screen::Choose(place) if self.state.place_open(place) => vec![Effect::ReadPlace(place, self.state.folder(s).path.clone())],

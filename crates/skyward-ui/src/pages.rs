@@ -1,9 +1,9 @@
 use crate::app::{
     Action, BackupAt, BackupEnd, BackupJob, Check, ClashChoice, Confirm, Damage, Data, Dock, DownloadEnd, EraseStop, Field, FileKind,
     FileOp, FileTask, Fold, Folder, Frame, FsAction, FsChoice, FsRow, Have, HeroArt, Hit, Install, JobEnd, Keys, Pick, Place, Rows, Screen,
-    SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target, UsbDrive, UsbLink, Wipe, ADDABLE,
-    BACKUP_PARTS, DATA_ERASED, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, SCREEN_OFF, TARGETS, TIME_ZONES, USB_DRIVE_UNREADABLE,
-    USB_DRIVE_WANTED, WIPES, installs, starting,
+    SkywardCheck, SkywardEnd, SkywardJob, SkywardStage, Slider, Source, State, Switch, SystemsWork, Target, UsbDrive, UsbLink, Wipe,
+    ADDABLE, BACKUP_PARTS, DATA_ERASED, DATA_OPENING, DATA_PARTITION, DOWNLOADS, FASTBOOT_CHOICES, KsuModule, SCREEN_OFF, TARGETS,
+    TIME_ZONES, USB_DRIVE_UNREADABLE, USB_DRIVE_WANTED, WIPES, installs, starting,
 };
 use crate::canvas::Canvas;
 use crate::color::Rgba;
@@ -98,6 +98,7 @@ pub fn render(screen: Screen, cx: &Ctx) -> Frame {
         Screen::FontLicense => font_license(cx),
         Screen::Slot => slot(cx),
         Screen::Systems => systems(cx),
+        Screen::Modules => modules(cx),
         Screen::Fastboot => fastboot(cx),
         Screen::Erase => erase(cx),
         Screen::CantStart => cant_start(cx),
@@ -175,6 +176,7 @@ const TIME_ZONE: Text = ["时区", "時區", "Time zone"];
 const LICENSE: Text = ["开源许可", "開放原始碼授權", "Open source licenses"];
 const FONTS: Text = ["界面字体", "介面字型", "UI fonts"];
 const DUAL_BOOT: Text = ["双系统", "雙系統", "Dual boot"];
+const KSU_MODULES: Text = ["KernelSU 模块", "KernelSU 模組", "KernelSU modules"];
 
 /// A canvas for a page `h` tall in the colour `bg`, holding the rows `cx`
 /// asks to be drawn.
@@ -1212,15 +1214,41 @@ pub fn installing(cx: &Ctx) -> Frame {
             let detail = tr!(l, "{size}，{holds}", "{size}，{holds}", "{size} · {holds}");
             let y = widgets::list(&mut c, t, f, top, &[standing(name, GREEN, Icon::Install, &detail)]).bottom;
             let y = widgets::section(&mut c, t, f, y, l.pick(["分区", "分割區", "Partition"]));
-            let rows: Vec<Row> = choice
-                .partitions
-                .iter()
-                .enumerate()
-                .map(|(k, p)| Row::new(p).subtitle(fmt::partition_role(l, p)).trail(Trail::Check(k == choice.partition)))
+            // The partitions the image fits, then, once the list of them is
+            // opened, every partition the phone keeps in both slots; the
+            // image need not fit one of those, and the page says so.
+            let mut titles: Vec<String> = choice.partitions[..choice.fits].iter().map(|p| p.to_string()).collect();
+            let mut subs: Vec<String> = choice.partitions[..choice.fits].iter().map(|p| fmt::partition_role(l, p).to_string()).collect();
+            let mut actions: Vec<Action> = (0..choice.fits).map(Action::FlashPartition).collect();
+            if choice.fits < choice.partitions.len() {
+                let rest = choice.partitions.len() - choice.fits;
+                let open = l.pick(["其他分区", "其他分割區", "Other partitions"]);
+                titles.push(format!("{open}（{rest}）"));
+                subs.push(match choice.expanded {
+                    true => l.pick(["镜像不一定会适合这些分区", "映像檔不一定會適合這些分割區", "The image need not fit these"]).into(),
+                    false => String::new(),
+                });
+                actions.push(Action::ExpandPartitions);
+            }
+            if choice.expanded {
+                for (k, p) in choice.partitions.iter().enumerate().skip(choice.fits) {
+                    titles.push(p.clone());
+                    subs.push(fmt::bytes(choice.sizes[k]));
+                    actions.push(Action::FlashPartition(k));
+                }
+            }
+            let shown = titles.len();
+            let rows: Vec<Row> = (0..shown)
+                .map(|k| {
+                    let mut row = Row::new(&titles[k]);
+                    if !subs[k].is_empty() {
+                        row = row.subtitle(&subs[k]);
+                    }
+                    row.trail(Trail::Check(k == choice.partition))
+                })
                 .collect();
             let parts = widgets::list(&mut c, t, f, y, &rows);
-            let choose: Vec<Action> = (0..choice.partitions.len()).map(Action::FlashPartition).collect();
-            out.extend(hits(&parts.rows, &choose));
+            out.extend(hits(&parts.rows, &actions));
             let y = widgets::section(&mut c, t, f, parts.bottom, l.pick(["槽位", "槽位", "Slot"]));
             let titles = Pick::ALL.map(|p| pick_title(l, p, i.slot));
             let rows: Vec<Row> =
@@ -1406,7 +1434,7 @@ pub fn installing(cx: &Ctx) -> Frame {
             }
             widgets::footnote(&mut c, t, f, y, l.pick(MORE_COMMANDS))
         }
-        Install::Finished { outcome, damage } => finished(&mut c, cx, top, outcome, *damage, &mut out, &mut rows),
+        Install::Finished { outcome, damage } => finished(&mut c, cx, top, outcome, damage.clone(), &mut out, &mut rows),
     };
     // What the system asked for says why, where it said.
     let bottom = match (s.source, &s.asked.reason) {
@@ -2204,6 +2232,7 @@ pub fn advanced(cx: &Ctx) -> Frame {
     let tools = widgets::list(&mut c, t, f, top, &[
         Row::new(l.pick(FILES)).icon(BLUE, Icon::Folder),
         Row::new(l.pick(TERMINAL)).icon(SLATE, Icon::Terminal),
+        Row::new(l.pick(KSU_MODULES)).icon(PURPLE, Icon::Systems),
         Row::new(l.pick(RELABEL)).icon(PURPLE, Icon::Shield),
         Row::new(l.pick(FILESYSTEMS)).icon(RED, Icon::Mount),
         Row::new(l.pick(LOGS)).icon(ORANGE, Icon::Log),
@@ -2212,12 +2241,95 @@ pub fn advanced(cx: &Ctx) -> Frame {
     let out = hits(&tools.rows, &[
         Action::Open(Screen::Files),
         Action::Open(Screen::Terminal),
+        Action::Open(Screen::Modules),
         Action::Open(Screen::Relabel),
         Action::Open(Screen::Filesystems),
         Action::Open(Screen::Logs),
         Action::Open(Screen::Update),
     ]);
     Frame::new(t, c, out, l.pick(ADVANCED), top)
+}
+
+/// KernelSU's modules in the data partition, each with a switch: one
+/// starts with the system unless the file that keeps it out stands in its
+/// folder, which the switch makes or takes away.
+pub fn modules(cx: &Ctx) -> Frame {
+    let (t, f, s, l) = (cx.t, cx.f, cx.state, cx.state.lang);
+    let mut c = long_page(cx);
+    let mut out = Vec::new();
+    let top = t.m.content_top;
+    let title = l.pick(KSU_MODULES);
+    let mounted = matches!(s.data, Data::Open | Data::Locked { .. });
+    let y = widgets::section_first(&mut c, t, f, top, l.pick(["模块", "模組", "Modules"]));
+    let bottom = if !mounted {
+        let note = match s.data {
+            Data::Opening => l.pick(DATA_OPENING).to_string(),
+            Data::Erased => l.pick(DATA_ERASED).to_string(),
+            _ => l.pick(DECRYPT_NEEDED).to_string(),
+        };
+        let list = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["暂无法读取模块", "暫時無法讀取模組", "The modules can't be read yet"])).subtitle(&note)]);
+        let open = widgets::list(&mut c, t, f, list.bottom + t.m.card_gap, &[Row::new(l.pick(DECRYPT))]);
+        out.extend(hits(&open.rows, &[Action::Open(Screen::Decrypt)]));
+        let note = l.pick([
+            "KernelSU 的模块保存在 data 分区中。",
+            "KernelSU 的模組儲存在 data 分割區中。",
+            "KernelSU keeps its modules in the data partition.",
+        ]);
+        widgets::footnote(&mut c, t, f, open.bottom, note)
+    } else {
+        match &s.modules {
+            None => widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["正在读取模块", "正在讀取模組", "Reading the modules"])).trail(Trail::None)]).bottom,
+            Some(Err(why)) => {
+                let list = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["无法读取模块", "無法讀取模組", "Couldn't read the modules"])).trail(Trail::None)]);
+                widgets::footnote(&mut c, t, f, list.bottom, why)
+            }
+            Some(Ok(listed)) if listed.is_empty() => {
+                let note = l.pick([
+                    "未找到 KernelSU 的模块。模块目录不存在时，可能是未安装 KernelSU。",
+                    "未找到 KernelSU 的模組。模組目錄不存在時，可能是未安裝 KernelSU。",
+                    "No KernelSU modules were found. Where the modules folder is missing, KernelSU may not be installed.",
+                ]);
+                let list = widgets::list(&mut c, t, f, y, &[Row::new(l.pick(["暂无模块", "暫無模組", "No modules"])).trail(Trail::None)]);
+                widgets::footnote(&mut c, t, f, list.bottom, note)
+            }
+            Some(Ok(listed)) => {
+                let subs: Vec<String> = listed.iter().map(|m| module_value(l, m)).collect();
+                let shown: Vec<Row> = listed.iter().zip(&subs).map(|(m, sub)| Row::new(&m.name).subtitle(sub).trail(Trail::Switch(m.enabled))).collect();
+                let list = widgets::list(&mut c, t, f, y, &shown);
+                out.extend(hits(&list.rows, &(0..listed.len()).map(Action::ToggleModule).collect::<Vec<_>>()));
+                let note = l.pick([
+                    "开关在下次进入系统时生效：关闭的模块将不被加载。标有删除的模块将在下次启动时被卸载。",
+                    "開關在下次進入系統時生效：關閉的模組將不被載入。標有刪除的模組將在下次啟動時被移除。",
+                    "The switches take hold the next time the system starts: a module switched off is left out. One marked for removal is taken away then too.",
+                ]);
+                widgets::footnote(&mut c, t, f, list.bottom, note)
+            }
+        }
+    };
+    Frame::new(t, fit(c, t, bottom), out, title, top)
+}
+
+/// What the row of a module says under its name: its version and its
+/// maker, and what stands over it.
+fn module_value(l: Lang, m: &KsuModule) -> String {
+    let mut held = match (&m.version, &m.author) {
+        (Some(v), Some(a)) => format!("{v} · {a}"),
+        (Some(v), None) => v.clone(),
+        (None, Some(a)) => a.clone(),
+        (None, None) => String::new(),
+    };
+    if m.update {
+        let update = l.pick(["待更新", "待更新", "An update waits"]);
+        held = if held.is_empty() { update.into() } else { format!("{held} · {update}") };
+    }
+    if m.removed {
+        let remove = l.pick(["下次启动时删除", "下次啟動時刪除", "Removed at the next boot"]);
+        held = if held.is_empty() { remove.into() } else { format!("{remove} · {held}") };
+    }
+    if held.is_empty() {
+        held = l.pick(if m.enabled { ["已启用", "已啟用", "On"] } else { ["已停用", "已停用", "Off"] }).into();
+    }
+    held
 }
 
 const RELABEL: Text = ["修复 SELinux 上下文", "修復 SELinux 上下文", "Fix SELinux contexts"];
