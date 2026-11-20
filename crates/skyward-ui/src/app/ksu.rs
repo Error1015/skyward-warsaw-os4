@@ -40,12 +40,19 @@ mod tests {
         KsuModule { id: id.into(), name: id.into(), version: None, author: None, description: None, enabled, removed: false, update: false }
     }
 
+    /// The advanced page, then the modules page.
+    fn to_modules(app: &mut App, f: &Fonts, i: &DeviceInfo) -> Vec<Effect> {
+        let mut fx = tap(app, f, i, Action::Open(Screen::Advanced));
+        fx.extend(tap(app, f, i, Action::Open(Screen::Modules)));
+        fx
+    }
+
     #[test]
     fn the_modules_are_read_once_the_page_opens_and_a_switch_asks_the_runtime() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Home, W, H, PPD);
         app.data_waiting(None);
-        assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Modules)), vec![Effect::ReadModules]);
+        assert_eq!(to_modules(&mut app, &f, &i), vec![Effect::ReadModules]);
         app.set_modules(Ok(vec![module("test", true), module("off", false)]));
         assert!(tap(&mut app, &f, &i, Action::Open(Screen::Modules)).is_empty(), "an answer heard is not asked again");
         assert_eq!(tap(&mut app, &f, &i, Action::ToggleModule(0)), vec![Effect::SetModule { id: "test".into(), on: false }]);
@@ -56,7 +63,7 @@ mod tests {
     fn the_page_asks_for_the_data_partition_before_it_is_open() {
         let (f, i) = (fonts(), info());
         let mut app = App::new(Screen::Home, W, H, PPD);
-        assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Modules)), vec![], "nothing to read yet");
+        assert_eq!(to_modules(&mut app, &f, &i), vec![], "nothing to read yet");
         assert!(app.frame(&f, &i).hits.iter().any(|h| h.action == Action::Open(Screen::Decrypt)));
         app.key(Key::Back, 0);
         // The partition open with the owner's own files still locked is
