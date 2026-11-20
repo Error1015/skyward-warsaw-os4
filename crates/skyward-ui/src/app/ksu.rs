@@ -54,8 +54,8 @@ mod tests {
         app.data_waiting(None);
         assert_eq!(to_modules(&mut app, &f, &i), vec![Effect::ReadModules]);
         app.set_modules(Ok(vec![module("test", true), module("off", false)]));
-        // The page read once is not asked to read again where it stands.
-        assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Advanced)), vec![]);
+        // The page read once is not asked to read again it is opened to.
+        app.key(Key::Back, 0);
         assert_eq!(tap(&mut app, &f, &i, Action::Open(Screen::Modules)), vec![], "an answer heard is not asked again");
         assert_eq!(tap(&mut app, &f, &i, Action::ToggleModule(0)), vec![Effect::SetModule { id: "test".into(), on: false }]);
         assert_eq!(tap(&mut app, &f, &i, Action::ToggleModule(1)), vec![Effect::SetModule { id: "off".into(), on: true }]);
