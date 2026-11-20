@@ -43,6 +43,10 @@ pub fn storage_key(service: &KeyMint, entry: &Entry, encryption: &Encryption) ->
 /// this start of the phone. A key the hardware holds never appears as
 /// itself: what comes back is wrapped again, for this start only.
 fn hardware_key(service: &KeyMint, dir: &Path, wrapped: bool) -> Result<Vec<u8>> {
+    // A key directory that is not there is worth saying plainly: the phone
+    // keeps it on a partition of its own, and a recovery that did not mount
+    // that one reads nothing where the key should be.
+    anyhow::ensure!(dir.is_dir(), "{} is not there; the partition the phone keeps it on is not mounted", dir.display());
     let stored = StoredKey::load(dir).with_context(|| format!("read the key in {}", dir.display()))?;
     let key = stored.unwrap(Unwrap::Hardware(service)).with_context(|| format!("unwrap the key in {}", dir.display()))?;
     match wrapped {
@@ -70,17 +74,35 @@ pub struct Opened {
 fn open(service: &KeyMint) -> Result<Opened> {
     let (entries, mapped) = map(service)?;
     let mounted = (|| -> Result<(Option<Checked>, String)> {
-        // A phone that names the partition once per filesystem it might
-        // hold mounts it with the entry of the one it holds.
+        // A phone that names the partition once per filesystem it might hold
+        // mounts it with the entry of the one it holds. blkid does not know
+        // every filesystem a phone may write there, as it does not know the
+        // one OS4.0.8.0 names mifs beside f2fs, so the rest are tried in the
+        // order the table names them rather than the first alone.
         let holds = skyward_block::probe::filesystem(&mapped)?;
-        let entry = entries.iter().find(|e| holds.as_ref() == Some(&e.filesystem)).unwrap_or(&entries[0]);
-        let checked = match entry.extras.iter().any(|e| e == "check") {
-            true => Some(skyward_block::fsck::check(&mapped, &entry.filesystem)?),
-            false => None,
-        };
+        let mut order: Vec<&Entry> = Vec::with_capacity(entries.len());
+        if let Some(named) = entries.iter().find(|e| holds.as_ref() == Some(&e.filesystem)) {
+            order.push(named);
+        }
+        let mut rest: Vec<&Entry> = entries.iter().filter(|e| !order.iter().any(|o| o.filesystem == e.filesystem)).collect();
+        order.append(&mut rest);
         std::fs::create_dir_all(MOUNT).with_context(|| format!("make {MOUNT}"))?;
-        mount::mount(&mapped, Path::new(MOUNT), &entry.filesystem, &entry.options)?;
-        Ok((checked, entry.filesystem.clone()))
+        let mut failed: Option<anyhow::Error> = None;
+        for entry in order {
+            let one = (|| -> Result<Option<Checked>> {
+                let checked = match entry.extras.iter().any(|e| e == "check") {
+                    true => Some(skyward_block::fsck::check(&mapped, &entry.filesystem)?),
+                    false => None,
+                };
+                mount::mount(&mapped, Path::new(MOUNT), &entry.filesystem, &entry.options)?;
+                Ok(checked)
+            })();
+            match one {
+                Ok(checked) => return Ok((checked, entry.filesystem.clone())),
+                Err(e) => failed = Some(e),
+            }
+        }
+        Err(failed.unwrap_or_else(|| anyhow::anyhow!("the phone's own table names no filesystem for {MOUNT}")))
     })();
     match mounted {
         Ok((checked, filesystem)) => Ok(Opened { mapped, filesystem, checked }),
@@ -96,7 +118,11 @@ fn open(service: &KeyMint) -> Result<Opened> {
 /// and the device the filesystem is read and written through.
 fn map(service: &KeyMint) -> Result<(Vec<Entry>, PathBuf)> {
     let entries = skyward_block::fstab::read(MOUNT)?;
-    let entry = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
+    let first = entries.first().with_context(|| format!("the phone's own table says nothing about {MOUNT}"))?;
+    // Where the table names the partition more than once, the entry that says
+    // how it is encrypted is the one it is read through, whichever of them
+    // the filesystem it holds is mounted with.
+    let entry = entries.iter().find(|e| e.extra("metadata_encryption").is_some()).unwrap_or(first);
     let encryption = Encryption::of(entry)?;
     let device = skyward_block::fstab::device(entry)?;
     let key = storage_key(service, entry, &encryption)?;
@@ -449,9 +475,14 @@ fn open_user_files(service: &KeyMint, user: u32, credential: Option<&[u8]>, owne
         // the secret is then guarded by nothing else.
         (Bound::Weaver(slot), _) => {
             let binder = Binder::open()?;
-            let weaver = Weaver::open(&binder)?;
-            let key = crate::user::weaver_key(&stretched, weaver.config()?.key_bytes)?;
-            let value = weaver.read(*slot, &key)?;
+            let weaver = Weaver::open(&binder).context("reach the weaver, which keeps what this secret is bound to")?;
+            // A weaver that cannot reach the element it keeps its slots in
+            // answers with one number for every way it can fail, so the two
+            // steps are told apart here: the first says the service itself
+            // is not up, the second that the slot was not given back.
+            let config = weaver.config().context("ask the weaver for the size of the slots it keeps")?;
+            let key = crate::user::weaver_key(&stretched, config.key_bytes)?;
+            let value = weaver.read(*slot, &key).with_context(|| format!("read what the secret is bound to from the weaver's slot {slot}"))?;
             (crate::user::weaver_protector_secret(&stretched, &value), None)
         }
         // The key holding this user's secret is guarded by the screen lock,

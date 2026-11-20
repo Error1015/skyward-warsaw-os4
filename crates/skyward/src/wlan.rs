@@ -30,9 +30,21 @@ const FIRMWARE: &str = "/etc/firmware";
 /// Where a partition a firmware file is read from is mounted meanwhile.
 const PARTITIONS: &str = "/skyward/wlan";
 
+/// Where the phone's own table mounts a partition, as persist, which may be
+/// mounted already when the WLAN starts.
+const MOUNTED: &str = "/mnt/vendor";
+
 /// The supplicant's settings, and the folder of its control socket, in the
 /// recovery service's own folder.
 const HOME: &str = "/skyward/run/supplicant";
+
+/// Where the network joined is kept so that it is joined again after a
+/// restart: the recovery's own folder does not outlast one, and the partition
+/// the phone keeps such things on does.
+const SAVED: &str = "/mnt/vendor/persist/skyward";
+
+/// The settings file the supplicant keeps what it is told in.
+const SETTINGS: &str = "wpa_supplicant.conf";
 
 /// The user the supplicant takes on as it starts, who has to be able to
 /// make its socket.
@@ -208,6 +220,18 @@ struct Station {
 
 impl Station {
     fn run(&mut self, asked: &worker::Told<Inbox>) {
+        // The partition the network joined is kept on is mounted before it
+        // is read: without it there is nothing kept to join, and the
+        // recovery comes up with the WLAN off as it always did.
+        if let Err(e) = skyward_block::fstab::mount("persist") {
+            let _ = skyward_sys::kmsg(&format!("the partition the network is kept on is not mounted: {e:#}"));
+        }
+        // A network kept from an earlier start is joined as the recovery
+        // comes up, as the phone's own system does with the one it was last
+        // joined to.
+        if kept_network() {
+            self.on();
+        }
         let mut told = self.state.clone();
         loop {
             let mut fds = vec![libc::pollfd { fd: asked.fd(), events: libc::POLLIN, revents: 0 }];
@@ -288,7 +312,11 @@ impl Station {
             Ok(r) => {
                 self.running = Some(r);
                 self.state.power = Power::On;
-                self.command(Command::Scan);
+                // A network kept from an earlier start is joined before a
+                // scan is asked for: the one to be on is the one kept.
+                if !self.resume_saved() {
+                    self.command(Command::Scan);
+                }
             }
             Err(e) => {
                 let _ = skyward_sys::kmsg(&format!("the WLAN did not come up: {e:#}"));
@@ -363,6 +391,24 @@ impl Station {
         r.control.order(&format!("SELECT_NETWORK {id}"))
     }
 
+    /// Join the network kept from an earlier start, if one is, and say
+    /// whether one was. What the network is protected with is not told here:
+    /// the supplicant holds it already, and the page shows its name while it
+    /// joins.
+    fn resume_saved(&mut self) -> bool {
+        let Some(r) = &self.running else { return false };
+        let Ok(listed) = r.control.ask("LIST_NETWORKS") else { return false };
+        let Some((id, ssid)) = kept_of(&listed) else { return false };
+        if let Err(e) = r.control.order(&format!("SELECT_NETWORK {id}")) {
+            let _ = skyward_sys::kmsg(&format!("the network kept from an earlier start is not joined again: {e:#}"));
+            return false;
+        }
+        let name = String::from_utf8_lossy(&ssid).into_owned();
+        let _ = skyward_sys::kmsg(&format!("joining {name}, the network kept from an earlier start"));
+        self.state.joined = Some(Joined { ssid, name, security: Security::PskSae, stage: Stage::Joining });
+        true
+    }
+
     /// Read what the supplicant has told.
     fn listen(&mut self) {
         let Some(r) = &self.running else { return };
@@ -404,7 +450,18 @@ impl Station {
         let Some(j) = &mut self.state.joined else { return };
         match j.on(told) {
             Next::Show => {}
-            Next::Address => self.ask_address(),
+            Next::Address => {
+                // Joined: what joined it is kept, so the next start joins it
+                // by itself. One that cannot be kept joined all the same.
+                let not_kept = match &self.running {
+                    Some(r) => r.control.order("SAVE_CONFIG").err(),
+                    None => None,
+                };
+                if let Some(e) = not_kept {
+                    let _ = skyward_sys::kmsg(&format!("the network joined is not kept for the next start: {e:#}"));
+                }
+                self.ask_address()
+            }
             Next::Unaddress => self.unaddress(),
             Next::Forget => {
                 if let Some(r) = &self.running
@@ -623,16 +680,39 @@ impl Station {
 /// Load the driver where its interface is not there yet, and bring the
 /// interface up.
 fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
+    // The partition the network joined is kept on, and the WLAN reads its
+    // address from, is mounted once here: every read of it afterwards finds
+    // it where the phone's own table puts it, and one f2fs is not mounted
+    // twice.
+    if let Err(e) = skyward_block::fstab::mount("persist") {
+        skyward_sys::kmsg(&format!("the partition the network is kept on is not mounted: {e:#}"))?;
+    }
     let net = Path::new("/sys/class/net").join(&cfg.interface);
     if !net.exists() {
         for file in &cfg.firmware {
             place(file)?;
         }
-        for path in skyward_modules::load(modules, &cfg.modules)? {
-            skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+        // What the driver depends on comes first, from the same folder's
+        // modules.dep. One that is not there, as a module an update moved is
+        // not, is said rather than kept from the others: the interface
+        // either appears or the wait below says it did not.
+        for name in &cfg.modules {
+            match skyward_modules::load(modules, std::slice::from_ref(name)) {
+                Ok(loaded) => {
+                    for path in loaded {
+                        skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+                    }
+                }
+                Err(e) => skyward_sys::kmsg(&format!("{name} is not loaded: {e:#}"))?,
+            }
         }
         for w in &cfg.writes {
-            fs::write(&w.path, &w.value).with_context(|| format!("write {} to {}", w.value, w.path))?;
+            // A switch the kernel of another build does not have is said
+            // rather than kept from the driver: the interface either appears
+            // or the wait below says it did not.
+            if let Err(e) = fs::write(&w.path, &w.value) {
+                skyward_sys::kmsg(&format!("{} is not written with {}: {e}", w.path, w.value))?;
+            }
         }
         let until = Instant::now() + INTERFACE_WAIT;
         while !net.exists() {
@@ -643,23 +723,91 @@ fn bring_up(cfg: &Config, modules: &[PathBuf]) -> Result<()> {
     iface::set_up(&cfg.interface, true)
 }
 
-/// Put a file the driver asks for where the firmware loader looks.
+/// Put a file the driver asks for where the firmware loader looks. A file
+/// the phone does not have is passed over: the one the firmware partition
+/// holds in its place is the one the loader finds, and a WLAN that comes up
+/// with it is better than one that does not come up at all.
 fn place(file: &Firmware) -> Result<()> {
     let to = Path::new(FIRMWARE).join(&file.name);
     let dir = to.parent().expect("a firmware file is in a folder");
-    fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
     let bytes = match &file.partition {
-        None => fs::read(&file.path).with_context(|| format!("read {}", file.path))?,
+        None => match fs::read(&file.path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return skyward_sys::kmsg(&format!("{} is not there, so {} is left to the firmware partition", file.path, file.name));
+            }
+            Err(e) => return Err(e).with_context(|| format!("read {}", file.path)),
+        },
         Some(partition) => {
-            let at = Path::new(PARTITIONS).join(partition);
-            fs::create_dir_all(&at).with_context(|| format!("make {}", at.display()))?;
-            skyward_block::mount::mount_ro(&Path::new(skyward_block::BY_NAME).join(partition), &at)?;
-            let read = fs::read(at.join(&file.path)).with_context(|| format!("read {} on {partition}", file.path));
-            skyward_block::mount::umount(&at)?;
-            read?
+            // The phone's own table mounts such a partition under /mnt/vendor,
+            // and the configuration may ask for it before the WLAN starts. One
+            // f2fs cannot be mounted read-only beside a writable mount of it,
+            // so a partition mounted already is read where it is: mounting it
+            // again here would turn the whole WLAN away.
+            let mounted = Path::new(MOUNTED).join(partition);
+            let ours = !skyward_block::mount::is_mount_point(&mounted)?;
+            let at = match ours {
+                true => {
+                    let at = Path::new(PARTITIONS).join(partition);
+                    fs::create_dir_all(&at).with_context(|| format!("make {}", at.display()))?;
+                    skyward_block::mount::mount_ro(&Path::new(skyward_block::BY_NAME).join(partition), &at)?;
+                    at
+                }
+                false => mounted,
+            };
+            let read = fs::read(at.join(&file.path));
+            let left = match ours {
+                true => skyward_block::mount::umount(&at),
+                false => Ok(()),
+            };
+            match read {
+                Ok(bytes) => {
+                    left?;
+                    bytes
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    left?;
+                    return skyward_sys::kmsg(&format!("{} is not on {partition}, so {} is left to the firmware partition", file.path, file.name));
+                }
+                Err(e) => {
+                    left?;
+                    return Err(e).with_context(|| format!("read {} on {partition}", file.path));
+                }
+            }
         }
     };
+    fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
     fs::write(&to, bytes).with_context(|| format!("write {}", to.display()))
+}
+
+/// Where the supplicant keeps its settings: the partition that outlasts a
+/// restart where it is mounted, and the recovery's own folder otherwise,
+/// where the network joined is not kept past this run.
+fn settings_dir() -> PathBuf {
+    match skyward_block::mount::is_mount_point(&Path::new(MOUNTED).join("persist")) {
+        Ok(true) => PathBuf::from(SAVED),
+        _ => PathBuf::from(HOME),
+    }
+}
+
+/// Whether a network was kept from an earlier start, which is joined again
+/// as the recovery comes up.
+fn kept_network() -> bool {
+    fs::read_to_string(settings_dir().join(SETTINGS)).is_ok_and(|text| text.contains("network={"))
+}
+
+/// The first network the supplicant has kept, as its number and its name.
+fn kept_of(listed: &str) -> Option<(u32, Vec<u8>)> {
+    for line in listed.lines().skip(1) {
+        let mut parts = line.split('\t');
+        let id = parts.next()?.trim().parse().ok()?;
+        let ssid = parts.next()?;
+        if ssid.is_empty() {
+            continue;
+        }
+        return Some((id, ssid.as_bytes().to_vec()));
+    }
+    None
 }
 
 /// Start the supplicant on the interface, and wait for its control socket.
@@ -670,10 +818,34 @@ fn start_supplicant(cfg: &Config, libraries: Option<&Path>) -> Result<Child> {
     fs::set_permissions(home, fs::Permissions::from_mode(0o755)).with_context(|| format!("open {} to the supplicant", home.display()))?;
     std::os::unix::fs::chown(&sockets, Some(WIFI), Some(WIFI)).with_context(|| format!("give {} to the supplicant", sockets.display()))?;
     fs::set_permissions(&sockets, fs::Permissions::from_mode(0o770)).with_context(|| format!("keep {} to the supplicant", sockets.display()))?;
-    let settings = home.join("wpa_supplicant.conf");
-    fs::write(&settings, format!("ctrl_interface={}\nupdate_config=0\np2p_disabled=1\npmf=1\nsae_pwe=2\n", sockets.display()))
-        .with_context(|| format!("write {}", settings.display()))?;
-    fs::set_permissions(&settings, fs::Permissions::from_mode(0o644)).with_context(|| format!("open {} to the supplicant", settings.display()))?;
+    // With `update_config` on, the supplicant writes the network joined into
+    // this file, so it is kept where a restart finds it and the supplicant
+    // itself is able to write it.
+    let kept = settings_dir();
+    fs::create_dir_all(&kept).with_context(|| format!("make {}", kept.display()))?;
+    let _ = std::os::unix::fs::chown(&kept, Some(WIFI), Some(WIFI));
+    fs::set_permissions(&kept, fs::Permissions::from_mode(0o770)).with_context(|| format!("open {} to the supplicant", kept.display()))?;
+    let settings = kept.join(SETTINGS);
+    // What the supplicant keeps of an earlier start is left where it is: the
+    // networks joined before are in this file, and only the lines that tell
+    // it where its socket is and to keep what it is told are set again.
+    let head = format!("ctrl_interface={}\nupdate_config=1\np2p_disabled=1\npmf=1\nsae_pwe=2\n", sockets.display());
+    let body = match fs::read_to_string(&settings) {
+        Ok(text) => {
+            let carried: Vec<&str> = text
+                .lines()
+                .filter(|line| !line.starts_with("ctrl_interface=") && !line.starts_with("update_config=") && !line.starts_with("p2p_disabled=") && !line.starts_with("pmf=") && !line.starts_with("sae_pwe="))
+                .collect();
+            match carried.is_empty() {
+                true => head,
+                false => format!("{head}{}\n", carried.join("\n")),
+            }
+        }
+        Err(_) => head,
+    };
+    fs::write(&settings, body).with_context(|| format!("write {}", settings.display()))?;
+    let _ = std::os::unix::fs::chown(&settings, Some(WIFI), Some(WIFI));
+    fs::set_permissions(&settings, fs::Permissions::from_mode(0o660)).with_context(|| format!("open {} to the supplicant", settings.display()))?;
     let socket = sockets.join(&cfg.interface);
     // One an earlier run left would answer nothing.
     if socket.exists() {

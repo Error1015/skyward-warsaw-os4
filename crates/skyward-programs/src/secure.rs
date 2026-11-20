@@ -279,8 +279,17 @@ fn weaver(phone: &Phone) -> Result<Vec<Step>> {
 /// `name` itself or the one the program's own description tells of beside
 /// it.
 fn element(phone: &Phone, name: &str) -> Result<Started> {
-    let program = behind(phone, "a secure element's service", name, |file| file.contains("secure_element"))?;
     let told = described(phone, Kind::Aidl, name).expect("the service was found among those described");
+    // Which program serves a secure element is told by the description that
+    // tells of the element: one the phone's own maker writes for a chip of
+    // its own is named after the service, while one a chip maker ships
+    // beside the service of an NFC chip is named after that chip, and the
+    // program the phone runs for the element is the chip's own, whose file
+    // is not named after the element's service at all.
+    let program = match chip_program(phone, told) {
+        Some(program) => program,
+        None => behind(phone, "a secure element's service", name, |file| file.contains("secure_element"))?,
+    };
     let of_an_element = |d: &Described| (d.package.as_str(), d.interface.as_str()) == ELEMENT;
     let own = match of_an_element(&told.described) {
         true => name.to_string(),
@@ -321,6 +330,31 @@ fn file_name(program: &Program) -> &str {
 fn stem(path: &str) -> &str {
     let file = path.rsplit('/').next().unwrap_or(path);
     file.rsplit_once('.').map_or(file, |(stem, _)| stem)
+}
+
+/// The program that serves the chip a secure element sits in, where the
+/// description that tells of the element tells of that chip's own service
+/// beside it: a chip maker ships one description for the whole chip, and
+/// the phone runs one program for it, whose file is named after the chip
+/// and not after the element inside it. None where the description tells
+/// of the element alone, and the program is named after it.
+fn chip_program<'a>(phone: &'a Phone, told: &crate::phone::Service) -> Option<&'a Program> {
+    let of_an_element = |d: &Described| (d.package.as_str(), d.interface.as_str()) == ELEMENT;
+    phone
+        .services
+        .iter()
+        .filter(|service| service.file == told.file && service.described.kind == Kind::Aidl && !of_an_element(&service.described))
+        .find_map(|service| {
+            // The chip's program is the one named after the service the
+            // chip provides, such as the NFC one the element is reached
+            // through. One the phone's init starts only when the chip's
+            // service is asked for is left to the directory to start, as
+            // the phone has it, and the element's own program is waited on
+            // instead.
+            let word = service.described.package.rsplit('.').next()?;
+            let program = behind(phone, "the service of the chip a secure element sits in", &service.described.name(), |file| file.contains(word)).ok()?;
+            (!on_demand(program)).then_some(program)
+        })
 }
 
 /// The one program the phone runs whose file is named `file`; none where

@@ -69,10 +69,18 @@ const TOUCH_WAIT: Duration = Duration::from_secs(5);
 /// about as long after the screen goes off.
 const REST: Duration = Duration::from_secs(5);
 
-/// Where logs saved to the temporary folder go, in the recovery service's
-/// own folder, and where in internal storage the others do.
+/// Where logs saved to the phone's own storage go when the partition they
+/// belong on is not mounted, in the recovery service's own folder, and where
+/// in internal storage the others do.
 const TMP_LOGS: &str = "/skyward/run/logs";
 const STORAGE_LOGS: &str = "Skyward/logs";
+
+/// Where logs go while internal storage is closed: a folder on the partition
+/// the phone keeps such things on, which outlasts the recovery, so that a
+/// file manager on the system can open what was exported. The recovery's own
+/// folder, which is where they went otherwise, is gone when the phone
+/// restarts.
+const KEPT_LOGS: &str = "skyward/logs";
 
 /// The folder of internal storage the system saves its own screenshots in,
 /// which the gallery shows as its screenshots, and where in the recovery
@@ -360,6 +368,21 @@ fn in_place(place: Place, path: &str) -> PathBuf {
 /// what update_engine wrote while it last installed an update and what the
 /// last install script wrote, and the kernel's. Each file is owned as a
 /// copy into the folder would be. Gives the folder.
+/// Where exported logs go while internal storage is closed, where the
+/// partition the phone keeps such things on is mounted. The partition is
+/// mounted for it if it is not already: the phone's own table says where,
+/// and mounting it twice is no harm, as the WLAN reads a file from it too.
+fn kept_logs() -> Option<PathBuf> {
+    const PERSIST: &str = "/mnt/vendor/persist";
+    match mount::is_mount_point(Path::new(PERSIST)) {
+        Ok(true) => Some(Path::new(PERSIST).join(KEPT_LOGS)),
+        _ => match fstab::mount("persist") {
+            Ok(at) => Some(at.join(KEPT_LOGS)),
+            Err(_) => None,
+        },
+    }
+}
+
 fn export_logs(recovery: bool, kernel: bool, into: &Path, zone: usize) -> Result<PathBuf> {
     let there = into.ancestors().find(|p| p.exists()).context("the root is always there")?;
     let ownership = ownership(there)?;
@@ -1688,6 +1711,20 @@ impl<'a> Pages<'a> {
     /// lit, and whether a frame was shown.
     fn show(&mut self, now: u64) -> Result<(bool, bool)> {
         let panel = self.app.panel(now);
+        // A panel that is lit again after being blacked out is one the touch
+        // controller was turned off with, so the touchscreen is told what it
+        // needs to report touches before the page is worked on again.
+        let woke = panel.is_some() && self.blanked;
+        // It is also one the display driver tells nothing of: coming back
+        // from its low-power rest sends no unblank event, and the touchscreen
+        // that follows the panel is woken by that event and by nothing else.
+        // Turned off here, the lighting below is a turn-on the driver does
+        // tell of, and the touchscreen comes back with it.
+        if woke
+            && let Err(e) = self.surface.turn_off()
+        {
+            skyward_sys::kmsg(&format!("the panel is not turned off to wake the touchscreen: {e:#}"))?;
+        }
         let mut shown = false;
         if panel.is_some() {
             // A display turned off comes on again with a frame drawn for it.
@@ -1723,6 +1760,11 @@ impl<'a> Pages<'a> {
             // refresh.
             self.surface.speed_up()?;
             self.rested_at = None;
+            if woke
+                && let Err(e) = self.inputs.reopen_touch()
+            {
+                skyward_sys::kmsg(&format!("the touchscreen is not opened again: {e:#}"))?;
+            }
         } else if self.surface.is_on() {
             // With the backlight off, the panel rests, and the touch
             // controller following it stops drawing power.
@@ -2457,6 +2499,7 @@ impl Pages<'_> {
                     answer(asked, self.fastboot)
                 }
                 Incoming::Input(Event::Touch(t, at)) => self.app.touch(t, &self.fonts, at),
+                Incoming::Input(Event::Gesture(g, at)) => self.app.gesture(g, at),
                 Incoming::Input(Event::Key(k, true)) => self.app.key(k, now),
                 Incoming::Input(Event::Key(k, false)) => self.app.key_up(k, now),
             };
@@ -2634,7 +2677,7 @@ impl Pages<'_> {
             Effect::ExportLogs { recovery, kernel, storage } => {
                 let into = match storage {
                     true => Path::new(skyward_crypto::data::SDCARD).join(STORAGE_LOGS),
-                    false => PathBuf::from(TMP_LOGS),
+                    false => kept_logs().unwrap_or_else(|| PathBuf::from(TMP_LOGS)),
                 };
                 match export_logs(recovery, kernel, &into, self.app.state.time_zone) {
                     Ok(folder) => self.app.report(&skyward_ui::fmt::exported(self.app.state.lang, &folder.display().to_string()), now),

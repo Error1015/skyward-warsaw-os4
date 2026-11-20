@@ -16,8 +16,13 @@ density = 480
 [modules]
 sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
 # The touchscreen: Goodix's, over SPI behind Xiaomi's touch layer, the one
-# touch driver the phone's own modules.load lists.
-load = ["goodix_core"]
+# touch driver the phone's own modules.load lists. The secure element the
+# weaver keeps a part of each user's secret in is the one built into the
+# phone's NFC chip, which the phone reaches through NXP's driver for it;
+# a recovery leaves every module of the vendor partition's list that it
+# does not name out, and without this one the chip is not there to be
+# opened.
+load = ["goodix_core", "nxp-nci"]
 
 # As on the 17 Ultra, no init script of the phone's starts touch_report:
 # the touch feature service turns the controller's raw frames into
@@ -43,17 +48,47 @@ oneshot = true
 user = "root"
 groups = ["root", "system", "wakelock", "graphics"]
 
+# The eSE power manager, which the phone's own init starts as
+# /vendor/bin/esepmdaemon in init.qcom.rc, before any program that talks to
+# the embedded secure element: it loads that element's trusted app into the
+# secure world and is the one thing that knows whether the element is
+# powered, turning it on and off through the power request line NXP's NFC
+# driver defines. The key service's secure element program, the weaver that
+# keeps a part of each user's secret in the element, and so the screen lock,
+# all fail without it: the element answers nothing, and the weaver turns
+# every credential down, the right one as a wrong one.
+[[service]]
+path = "/vendor/bin/esepmdaemon"
+libraries = ["/system/lib64", "/vendor/lib64"]
+user = "system"
+groups = ["nfc"]
+
 # WLAN: the kiwi node in the device tree, driven by qca_cld3_kiwi_v2, the
 # one kiwi driver the phone's own modules.blocklist leaves of those its
 # modules.load lists; the Peach, WCN7750 and QCA6750 drivers it lists as
 # well are for chips the device tree has no node of. Its cfg80211 asks for
 # rfkill, one of the kernel's own modules in system_dlkm, as the 17
-# Ultra's does. Its recovery covers the vendor partition's firmware folder
-# with the modem's, as the 13 Ultra's does, so the settings and the MAC
-# address are given to the loader again: the settings from the vendor
-# partition, the address from where the vendor's link points in persist.
-# wpa_supplicant runs on the recovery's own libraries before the vendor
-# partition's, as on the 17 Ultra.
+# Ultra's does.
+#
+# The driver's firmware, and the apps the secure world runs, are on the
+# modem partition: the vendor partition's firmware folder is a set of links
+# into it. The stock recovery of OS4.0.8.0 mounts the modem partition from
+# `/vendor/etc/charger_fstab.qti`, which that build no longer ships (it
+# ships `charger_fw_fstab.qti` instead), so its own `on fs` section fails
+# to mount it and the link at /vendor/firmware leads nowhere: the recovery
+# mounts the partition itself, where the phone's own table mounts it, and
+# shows it at /firmware as well. The settings and the MAC address are given
+# to the loader again, the settings from the vendor partition and the
+# address from where the vendor's link points in persist. wpa_supplicant
+# runs on the recovery's own libraries before the vendor partition's, as on
+# the 17 Ultra.
+[firmware]
+partition = "modem"
+
+# The persist partition, which the phone mounts at /mnt/vendor/persist, is
+# not mounted here: the WLAN reads its MAC address from it on its own, and
+# one f2fs cannot be mounted read-only beside a writable mount of it, which
+# turns the whole WLAN away.
 [wlan]
 modules = ["rfkill", "qca_cld3_kiwi_v2"]
 writes = [{ path = "/sys/kernel/cnss/fs_ready", value = "1" }]
@@ -72,8 +107,9 @@ probe = "http://connect.rom.miui.com/generate_204"
 server = "https://update.miui.com/updates/miotaV3.php"
 
 # The stock build the recovery is made on: the Chinese system's
-# OS3.0.309.0, whose full update package on the phone maker's own download
-# server holds the recovery partition the recovery is built on top of.
+# OS4.0.8.0 (Android 17), whose full update package on the phone maker's own
+# download server holds the recovery partition the recovery is built on top
+# of.
 [stock]
 version = "OS4.0.8.0.XHPCNXM"
 package = "https://bigota.d.miui.com/OS4.0.8.0.XHPCNXM/warsaw-ota_full-OS4.0.8.0.XHPCNXM-user-17.0-96194cf12c.zip"

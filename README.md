@@ -6,6 +6,50 @@ English | [简体中文](README.zh-CN.md)
 
 Skyward is a recovery written in Rust, from scratch.
 
+## This fork
+
+This is a fork of [kirklin/skyward](https://github.com/kirklin/skyward) that keeps
+the build for the REDMI K90 Ultra (`warsaw`) on OS4.0.8.0 (Android 17): the device
+configuration is checked again against that release, and the problems below are
+what had to be fixed before the build was usable.
+
+### What is different from upstream
+
+**Decryption.** The embedded secure element of OS4.0.8.0 is powered, and its
+trusted app loaded into the secure world, by `/vendor/bin/esepmdaemon`, which the
+phone's own init starts and the recovery did not: the element's HAL cannot reach
+the chip, the weaver cannot read its slots, and every credential is turned down,
+the right one as a wrong one, with nothing on the screen but `error 1`. The
+`warsaw` configuration starts it as a `[[service]]`, and opens `/dev/tee*`,
+`ese*`, `nq*` and `nfc*` before any program that needs them starts.
+
+**Wi-Fi.** This release ships `charger_fw_fstab.qti` in place of
+`charger_fstab.qti`, so the stock recovery's `mount_all` fails, the modem
+partition is never mounted, and `/vendor/firmware/wlan` links into nothing: the
+WLAN has no firmware, and the secure world has no trusted app to load, which is
+the same cause as the one above. The `warsaw` configuration mounts the modem
+partition itself and shows it at `/firmware` as well, and the network last joined
+is kept on the persist partition, so a restart joins it again.
+
+**Touch.** This Goodix panel follows the display through
+`panel_event_notifier`, and Skyward rested the panel in its low-power state,
+which reports no event as it comes back: the controller stopped reporting real
+touches. The panel is now turned off for real before it is lit, so that lighting
+it is a turn-on the driver reports; on waking, the controller is reset, the
+device reopened, and `[touch] writes` told again.
+
+**Added.** Three fingers pulled down take a screenshot, saved as the key
+combination does (`DCIM/Screenshots`, held until the data partition is open); the
+WLAN joins the network it last joined as the recovery starts; and logs exported
+while internal storage is closed go to
+`/mnt/vendor/persist/skyward/logs/<time>/`, which outlasts a restart and which a
+file manager on the system can open.
+
+### Not yet verified
+
+The three-finger screenshot and the logs kept on the persist partition have not
+been tried on the phone; the WLAN, the touchscreen and decryption have.
+
 <p align="center">
   <img src="assets/home.png" width="30%" alt="Home">
   <img src="assets/settings-dark.png" width="30%" alt="Settings in dark mode">
@@ -91,6 +135,7 @@ read and set properties.
 | --- | --- | --- |
 | Xiaomi 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM (Android 17) |
 | Xiaomi 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM (Android 16) |
+| REDMI K90 Ultra | `warsaw` | OS4.0.8.0.XHPCNXM (Android 17), kept in this fork |
 
 ### 🚧 Under construction
 
@@ -119,7 +164,6 @@ not been verified.
 | 🚧 REDMI K80 Pro | `miro` | OS3.0.305.0.WOMCNXM (Android 16) |
 | 🚧 REDMI K90 | `annibale` | OS3.0.307.0.WPKCNXM (Android 16) |
 | 🚧 REDMI K90 Pro Max | `myron` | OS4.0.4.0.XPMCNXM (Android 17) |
-| 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM (Android 16) |
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM (Android 17) |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM (Android 17) |
 
@@ -237,6 +281,19 @@ target/release/skyward-pack recovery \
   --mono-license resources/fonts/KirkMono-OFL.txt \
   --out target/skyward-nezha.img
 ```
+
+On Windows, where the workspace has no unix host and `skyward-block`, which
+`skyward-pack` needs, does not build, `tools/pack_warsaw.py` packs the same image:
+build `skyward` and `skyward-system-init` for the phone as above, then give it the
+stock recovery partition, the configuration and `lz4`:
+
+```sh
+python tools/pack_warsaw.py stock/recovery.img out/skyward-warsaw.img /path/to/lz4.exe
+```
+
+It does the same work: it unpacks the stock recovery's ramdisk, puts Skyward's
+programs, configuration and fonts in, packs it into cpio and lz4 again, and writes
+an unsigned AVB footer after it.
 
 Tests and lints run on the computer; what runs only on the phone is linted for it:
 

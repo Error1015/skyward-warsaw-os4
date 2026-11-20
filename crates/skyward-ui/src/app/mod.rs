@@ -394,6 +394,14 @@ pub enum Touch {
     Up,
 }
 
+/// What several fingers do together, which no page reads as a touch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gesture {
+    /// Three fingers pulled down the panel together: what it shows is saved
+    /// as a picture, as the power key and volume down together do.
+    ThreeFingersDown,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Power,

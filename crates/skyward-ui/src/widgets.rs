@@ -919,11 +919,22 @@ fn chip(t: &Theme, (cx, cy, r): (f32, f32, f32)) -> (Canvas, i32, i32) {
 pub fn toast(c: &mut Canvas, t: &Theme, f: &Fonts, text: &str) {
     let m = &t.m;
     let px = m.sub_px;
-    let w = c.text_width(&f.heading, text, px) + m.dp(40.0);
-    let h = m.dp(44.0);
-    let (x, y) = ((m.w as f32 - w) / 2.0, m.h as f32 - m.dp(120.0));
-    c.fill_round_rect(x, y, w, h, h / 2.0, Rgba::rgb(30, 30, 30).with_alpha(235));
-    c.text_center(&f.heading, text, m.w as f32 / 2.0, y + h / 2.0, px, Rgba::rgb(255, 255, 255));
+    // What a page has to say can be longer than the screen is wide, and the
+    // end of it is where the cause is: it is set over as many lines as it
+    // takes rather than cut away at both ends.
+    let lines = wrap(c, &f.heading, text, px, m.w as f32 - m.dp(48.0));
+    let widest = lines.iter().map(|line| c.text_width(&f.heading, line, px)).fold(0.0_f32, f32::max);
+    let w = (widest + m.dp(40.0)).min(m.w as f32 - m.dp(16.0));
+    let line_h = px * 1.45;
+    // One line stands as it always did; each line more grows the bubble
+    // upwards, its bottom edge staying where it was.
+    let h = m.dp(44.0) + line_h * lines.len().saturating_sub(1) as f32;
+    let (x, y) = ((m.w as f32 - w) / 2.0, m.h as f32 - m.dp(120.0) - h + m.dp(44.0));
+    c.fill_round_rect(x, y, w, h, m.dp(22.0).min(h / 2.0), Rgba::rgb(30, 30, 30).with_alpha(235));
+    let first = y + h / 2.0 - line_h * lines.len().saturating_sub(1) as f32 / 2.0;
+    for (i, line) in lines.iter().enumerate() {
+        c.text_center(&f.heading, line, m.w as f32 / 2.0, first + line_h * i as f32, px, Rgba::rgb(255, 255, 255));
+    }
 }
 
 /// The home page's search bar in `r`, at `level` of its strength, without

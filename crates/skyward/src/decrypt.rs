@@ -55,12 +55,18 @@ impl Decryptor {
 }
 
 /// Do `work` with the phone's key service, reached afresh for it, and say
-/// why it failed in words for the page.
+/// why it failed in words for the page. What went wrong also goes to the
+/// kernel log, in the words of every step it went through, as the page
+/// shows only the one line that fits.
 pub fn with_key_service<T>(work: impl FnOnce(&KeyMint) -> Result<T>) -> Result<T, String> {
     let done = (|| {
         let binder = Binder::open()?;
         let service = KeyMint::open(&binder)?;
         work(&service)
     })();
-    done.map_err(|e| format!("{e:#}"))
+    done.map_err(|e| {
+        let why = format!("{e:#}");
+        let _ = skyward_sys::kmsg(&format!("the phone's keys: {why}"));
+        why
+    })
 }

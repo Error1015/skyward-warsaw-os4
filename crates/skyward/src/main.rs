@@ -503,7 +503,27 @@ fn lp(super_dev: &Path, slot: Option<u32>) -> Result<()> {
 /// Load `names` from the module sources the configuration lists.
 fn load_modules(cfg: &DeviceConfig, names: &[String]) -> Result<Vec<PathBuf>> {
     let dirs = cfg.modules.sources.iter().map(|s| skyward_modules::source_dir(s)).collect::<Result<Vec<_>>>()?;
-    skyward_modules::load(&dirs, names)
+    // One at a time: a driver the phone's build of the hardware has none of,
+    // as the one of an NFC chip a build ships without, is said and the rest
+    // are loaded all the same. Its own dependencies come with it, and one
+    // already loaded counts as loaded.
+    let mut loaded = Vec::new();
+    let mut refused: Option<anyhow::Error> = None;
+    for name in names {
+        match skyward_modules::load(&dirs, std::slice::from_ref(name)) {
+            Ok(paths) => loaded.extend(paths),
+            Err(e) => {
+                skyward_sys::kmsg(&format!("{name} is not loaded: {e:#}"))?;
+                if refused.is_none() {
+                    refused = Some(e);
+                }
+            }
+        }
+    }
+    match refused {
+        Some(e) => Err(e),
+        None => Ok(loaded),
+    }
 }
 
 /// Start the recovery's own logd where it needs libraries of the installed
@@ -533,21 +553,43 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot, found: Result<keys::Fou
     let services: Vec<Started> = cfg.services.iter().filter(|s| s.runs_on(&props)).cloned().map(Started::from).collect();
     // The drivers ask for their firmware by name, and the kernel looks only
     // in folders of its own unless told to pass on what it does not find
-    // there to ueventd, which looks in the recovery's firmware folders.
-    std::fs::write(FIRMWARE_FALLBACK, "1").with_context(|| format!("write 1 to {FIRMWARE_FALLBACK}"))?;
-    if let Some(firmware) = &cfg.firmware {
-        mount_firmware(&firmware.partition)?;
+    // there to ueventd, which looks in the recovery's firmware folders. The
+    // recovery's own init sets it as it starts; a kernel that has no such
+    // switch is said and the drivers look where they look.
+    if let Err(e) = std::fs::write(FIRMWARE_FALLBACK, "1") {
+        skyward_sys::kmsg(&format!("{FIRMWARE_FALLBACK} is not set: {e}"))?;
+    }
+    // A partition the configuration names is mounted for what the drivers and
+    // the secure world read from it; one that does not mount leaves those
+    // without it, and the pages that need the phone's keys work either way,
+    // so the reason goes to the kernel log.
+    if let Some(firmware) = &cfg.firmware
+        && let Err(e) = mount_firmware(&firmware.partition)
+    {
+        skyward_sys::kmsg(&format!("the firmware partition is not mounted: {e:#}"))?;
     }
     for name in &cfg.partitions.mounted {
-        let at = skyward_block::fstab::mount(name)?;
-        skyward_sys::kmsg(&format!("{name} is mounted on {}", at.display()))?;
+        match skyward_block::fstab::mount(name) {
+            Ok(at) => skyward_sys::kmsg(&format!("{name} is mounted on {}", at.display()))?,
+            Err(e) => skyward_sys::kmsg(&format!("{name} is not mounted: {e:#}"))?,
+        }
     }
-    for path in load_modules(cfg, &cfg.modules.load)? {
-        skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+    // The modules are the drivers the pages are drawn with, as the
+    // touchscreen's: one a build moved or renamed is said rather than kept
+    // from the programs below.
+    match load_modules(cfg, &cfg.modules.load) {
+        Ok(loaded) => {
+            for path in loaded {
+                skyward_sys::kmsg(&format!("loaded {}", path.display()))?;
+            }
+        }
+        Err(e) => skyward_sys::kmsg(&format!("not all of the modules the configuration names are loaded: {e:#}"))?,
     }
     if !cfg.owners.is_empty() {
-        let handed = hand_over(&cfg.owners)?;
-        skyward_sys::kmsg(&format!("{handed} of the phone's own files handed to the accounts its init gives them"))?;
+        match hand_over(&cfg.owners) {
+            Ok(handed) => skyward_sys::kmsg(&format!("{handed} of the phone's own files handed to the accounts its init gives them"))?,
+            Err(e) => skyward_sys::kmsg(&format!("not all of the phone's own files are handed over: {e:#}"))?,
+        }
     }
     // What the phone describes is known wherever its partitions could be
     // read at all; what they say of its keys may still not be.
@@ -591,12 +633,42 @@ fn bring_up(cfg: &DeviceConfig, slot: skyward_vab::Slot, found: Result<keys::Fou
     if let Some(dir) = &libraries {
         skyward_sys::kmsg(&format!("the phone's own libraries are at {}", dir.display()))?;
     }
-    services::start(&services, libraries.as_deref())?;
+    // The secure world's devices are opened before any program that takes on
+    // a user of its own starts, the configuration's eSE power manager and
+    // the weaver among them: one that cannot open them comes up without the
+    // element it keeps its slots in, and then turns down every credential,
+    // the right one as a wrong one.
+    if let Err(e) = open_secure_devices() {
+        skyward_sys::kmsg(&format!("the secure world's devices are not opened: {e:#}"))?;
+    }
+    // A program the configuration names is a convenience the phone's own
+    // scripts provide: one an update took away, or one that refuses to run
+    // in a recovery, is said in the kernel log rather than kept from the
+    // programs below, which are what the pages that need the phone's keys
+    // cannot do without.
+    if let Err(e) = services::start(&services, libraries.as_deref()) {
+        skyward_sys::kmsg(&format!("the phone's own programs the configuration names did not all start: {e:#}"))?;
+    }
     let steps = found.context("make out from the phone's partitions how its keys are used")?;
     for line in keys::describe(&steps) {
         skyward_sys::kmsg(&format!("for the phone's keys: {}", line.replace("\n  ", ", ")))?;
     }
-    keys::start(&steps)?;
+    // Logs exported while internal storage is closed are kept where a file
+    // manager on the system can open them, which is the partition the phone
+    // keeps such things on: mounted here, before any page asks for one.
+    // The WLAN mounts it too, and reads its address from it, so one f2fs is
+    // not mounted twice.
+    if let Err(e) = skyward_block::fstab::mount("persist") {
+        skyward_sys::kmsg(&format!("the partition exported logs are kept on is not mounted: {e:#}"))?;
+    }
+    // A program that does not come up keeps the pages that need it from
+    // working, and nothing else: the secure world's two halves still have
+    // to agree on the key a note is signed with, or the key service turns
+    // down every note the credential service writes, with the right
+    // credential as with a wrong one.
+    if let Err(e) = keys::start(&steps) {
+        skyward_sys::kmsg(&format!("the phone's own programs that use its keys did not all start: {e:#}"))?;
+    }
     agree_on_the_notes_key(&registering)
 }
 
@@ -717,6 +789,74 @@ fn mount_firmware(partition: &str) -> Result<()> {
 /// property files leave these out so that they can be set here instead.
 #[cfg(target_os = "android")]
 const BUILD_VERSION: [&str; 3] = ["ro.build.version.release", "ro.build.version.security_patch", "ro.vendor.build.security_patch"];
+
+/// Let the programs the phone's own init runs reach the secure world. A
+/// recovery's ueventd carries none of the rules the system's carries, so
+/// these devices are left to root, and a service that takes on a user of its
+/// own, as the weaver does, is turned away from them: it comes up without the
+/// element it keeps its slots in, and every credential is turned down, the
+/// right one as a wrong one.
+#[cfg(target_os = "android")]
+fn open_secure_devices() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    const DEVICES: [&str; 2] = ["/dev/qseecom", "/dev/smcinvoke"];
+    let mut opened = 0;
+    for name in DEVICES {
+        let path = Path::new(name);
+        if !path.exists() {
+            continue;
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666)).with_context(|| format!("open {name}"))?;
+        opened += 1;
+        skyward_sys::kmsg(&format!("{name} is open to the programs that use it"))?;
+    }
+    // The secure world's devices of a Qualcomm phone are numbered, as
+    // /dev/tee0 and /dev/teepriv0, and the chip the embedded secure element
+    // sits in has devices of its own: /dev/nq-nci and /dev/ese*, which its
+    // power manager opens, and /dev/nfc* beside them. Each one there is is
+    // opened, and those there are told, as a recovery that cannot find one
+    // has to say which it looked for.
+    let mut found: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir("/dev").into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !["tee", "ese", "nq", "nfc"].iter().any(|starts| name.starts_with(starts)) {
+            continue;
+        }
+        found.push(name);
+        if std::fs::set_permissions(entry.path(), std::fs::Permissions::from_mode(0o666)).is_ok() {
+            opened += 1;
+            skyward_sys::kmsg(&format!("{} is open to the programs that use it", entry.path().display()))?;
+        }
+    }
+    found.sort();
+    match opened {
+        0 => skyward_sys::kmsg("the secure world has no device of its own to open")?,
+        _ => {
+            if !found.is_empty() {
+                skyward_sys::kmsg(&format!("the chip the secure element sits in has: {}", found.join(", ")))?;
+            }
+        }
+    }
+    // The switches NXP's driver for the chip gives the power manager, which
+    // turns the element on through one of them: told, so that a recovery
+    // that finds the element silent says what there was to turn.
+    let mut switches: Vec<String> = Vec::new();
+    for dir in ["/sys/class/nq-nci", "/sys/class/ese", "/sys/class/ese0"] {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            switches.push(format!("{}/{}", dir, entry.file_name().to_string_lossy()));
+        }
+    }
+    if !switches.is_empty() {
+        switches.truncate(24);
+        skyward_sys::kmsg(&format!("the secure element's own switches: {}", switches.join(", ")))?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "android"))]
+fn open_secure_devices() -> Result<()> {
+    Ok(())
+}
 
 /// Set each of [`BUILD_VERSION`] to the installed system's value. An earlier
 /// run of the recovery service may have set it already, and init sets such

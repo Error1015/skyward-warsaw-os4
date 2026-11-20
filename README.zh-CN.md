@@ -6,6 +6,24 @@
 
 Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 
+## 本仓库
+
+这是 [kirklin/skyward](https://github.com/kirklin/skyward) 的 fork，维护 REDMI K90 Ultra（`warsaw`）在 OS4.0.8.0（Android 17）上的构建：设备配置按这一版固件重新核对，下面这些问题在这一版上是修好之后才可用的。
+
+### 与上游的差别
+
+**解密。** OS4.0.8.0 的 eSE 要先由 `/vendor/bin/esepmdaemon` 上电，并把 eseservice TA 载入安全世界，手机自己的 init 会启动它，recovery 原来不启动：SE HAL 连不上芯片，weaver 取不到槽位，任何密码都会被拒绝，屏幕上只留下一个 `error 1`。warsaw 的配置现在把它作为 `[[service]]` 启动，并且在所有程序启动之前放开 `/dev` 下的 `tee*`、`ese*`、`nq*`、`nfc*`。
+
+**WLAN。** 这一版的 vendor 分区不再有 `charger_fstab.qti`，改成了 `charger_fw_fstab.qti`，原厂 recovery 的 `mount_all` 因此失败，modem 分区没有挂上，`/vendor/firmware/wlan` 这条软链接指向空处：WLAN 没有固件，安全世界也没有 TA 可载入，和解密失败是同一个原因。warsaw 的配置让 recovery 自己挂 modem，并把它同时显示在 `/firmware`。连过一次的网络保存在 persist 分区，重启后自动重连。
+
+**触摸。** 这块 Goodix 面板靠 `panel_event_notifier` 跟随屏幕的亮灭，而 Skyward 息屏时用的是面板的低功耗状态，点亮时驱动收不到事件，控制器回来之后不再上报正常触摸。现在点亮之前先把面板真正关一次，让点亮成为一次驱动会报告的开机；唤醒之后还会复位控制器、重开设备、重新下发 `[touch] writes`。
+
+**新增。** 三指下滑截图，保存方式和电源键加音量下相同（`DCIM/Screenshots`，data 尚未解密时先暂存，解密后自动搬进相册）；WLAN 记住最后一次连上的网络，开机自动连接；“导出日志”在未打开内部存储时写到 `/mnt/vendor/persist/skyward/logs/<时间>/`，重启后仍然在，进系统之后可以用文件管理器读到。
+
+### 尚未验证
+
+三指下滑截图和“导出日志”落到 persist 这两项，还没有在真机上试过；WLAN、触摸和解密已经在 `warsaw` 上验证。
+
 <p align="center">
   <img src="assets/home.png" width="30%" alt="首页">
   <img src="assets/settings-dark.png" width="30%" alt="深色模式下的设置">
@@ -87,6 +105,7 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | --- | --- | --- |
 | 小米 17 Ultra | `nezha` | OS4.0.4.0.XPACNXM（Android 17） |
 | 小米 13 Ultra | `ishtar` | OS3.0.308.0.WMACNXM（Android 16） |
+| REDMI K90 Ultra | `warsaw` | OS4.0.8.0.XHPCNXM（Android 17），本仓库维护 |
 
 ### 🚧 施工中
 
@@ -110,7 +129,6 @@ Skyward 是使用 Rust 编写的 recovery，从零开始编写。
 | 🚧 REDMI K80 Pro | `miro` | OS3.0.305.0.WOMCNXM（Android 16） |
 | 🚧 REDMI K90 | `annibale` | OS3.0.307.0.WPKCNXM（Android 16） |
 | 🚧 REDMI K90 Pro Max | `myron` | OS4.0.4.0.XPMCNXM（Android 17） |
-| 🚧 REDMI K90 Ultra | `warsaw` | OS3.0.309.0.WHPCNXM（Android 16） |
 | 🚧 REDMI K100 Pro | `athens` | OS4.0.4.0.XPICNXM（Android 17） |
 | 🚧 REDMI K100 Pro Max | `songyuan` | OS4.0.4.0.XGNCNXM（Android 17） |
 
@@ -181,6 +199,14 @@ target/release/skyward-pack recovery \
   --mono-license resources/fonts/KirkMono-OFL.txt \
   --out target/skyward-nezha.img
 ```
+
+在没有 unix 环境的 Windows 上，`skyward-pack` 依赖的 `skyward-block` 编译不过，可以改用 `tools/pack_warsaw.py` 打包同一个镜像：先按上面的命令用 NDK 交叉编译出 `skyward` 和 `skyward-system-init`，再给出原厂 recovery 分区、配置文件与 `lz4` 的位置：
+
+```sh
+python tools/pack_warsaw.py stock/recovery.img out/skyward-warsaw.img /path/to/lz4.exe
+```
+
+它做的是同一件事：解包原厂 recovery 的 ramdisk，换入 Skyward 的程序、配置和字体，重新打成 cpio 与 lz4，再写回一个没有签名的 AVB 尾部。
 
 测试和代码检查在电脑上运行；只在手机上运行的代码按照手机目标检查：
 

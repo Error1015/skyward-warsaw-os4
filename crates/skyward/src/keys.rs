@@ -99,17 +99,37 @@ pub fn serves_elements(steps: &[Step]) -> bool {
 /// is after the secure elements' own services have registered and before
 /// the weaver that reaches its secure element through it starts. Each
 /// program names every folder its libraries are looked for in.
+///
+/// A step that does not go through is said in the kernel log and the rest
+/// are done all the same: a program an update moved keeps the pages that
+/// need none of it from working, and what follows it, such as the weaver
+/// or the secure element service, may not need it either. Why the first
+/// one did not go through is given back.
 pub fn start(steps: &[Step]) -> Result<()> {
+    let mut refused: Option<anyhow::Error> = None;
     for step in steps {
-        match step {
-            Step::Start(program) => crate::services::start(std::slice::from_ref(program.as_ref()), None)?,
-            Step::ServeElements => {
-                let readers = skyward_omapi::start()?;
-                skyward_sys::kmsg(&format!("{} is served, with a reader for each of {} secure elements: {}", skyward_omapi::SERVICE, readers.len(), readers.join(", ")))?;
+        let done = match step {
+            Step::Start(program) => crate::services::start(std::slice::from_ref(program.as_ref()), None),
+            Step::ServeElements => skyward_omapi::start().map(|readers| {
+                let _ = skyward_sys::kmsg(&format!(
+                    "{} is served, with a reader for each of {} secure elements: {}",
+                    skyward_omapi::SERVICE,
+                    readers.len(),
+                    readers.join(", ")
+                ));
+            }),
+        };
+        if let Err(e) = done {
+            let _ = skyward_sys::kmsg(&format!("a step of the phone's keys did not go through: {e:#}"));
+            if refused.is_none() {
+                refused = Some(e);
             }
         }
     }
-    Ok(())
+    match refused {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// What `steps` are, a line each, as the `keys` command prints them.

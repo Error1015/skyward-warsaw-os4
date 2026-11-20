@@ -385,6 +385,24 @@ impl App {
         fx
     }
 
+    /// Three fingers were pulled down the panel together: what it shows is
+    /// saved as a picture, with a tap of the motor, as the power key and
+    /// volume down together do. The gesture is taken once for one pull, so
+    /// a finger that lingers does not take the picture twice.
+    pub fn gesture(&mut self, how: Gesture, now: u64) -> Vec<Effect> {
+        match how {
+            Gesture::ThreeFingersDown => {
+                self.stir(now);
+                let mut fx = Vec::new();
+                if self.state.vibrate {
+                    fx.push(Effect::Haptic);
+                }
+                fx.push(Effect::Screenshot { storage: self.state.place_open(Place::Storage) });
+                fx
+            }
+        }
+    }
+
     /// The key waiting for its partner in a screenshot does what it does
     /// alone `now`, as pressed when it went down.
     pub(super) fn let_chord_go(&mut self, now: u64) -> Vec<Effect> {

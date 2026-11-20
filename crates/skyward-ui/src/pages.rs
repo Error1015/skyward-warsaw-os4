@@ -3502,16 +3502,20 @@ pub fn logs(cx: &Ctx) -> Frame {
         false => DECRYPT_NEEDED,
     });
     let places = widgets::list(&mut c, t, f, y, &[
-        Row::new(l.pick(["临时文件夹", "暫存資料夾", "Temporary folder"]))
-            .subtitle(l.pick(["/skyward/run/logs，可通过 adb pull 导出到电脑", "/skyward/run/logs，可透過 adb pull 匯出到電腦", "/skyward/run/logs, which adb pull copies to a computer"]))
+        Row::new(l.pick(["手机存储（persist 分区）", "手機儲存（persist 分割區）", "The phone's own storage (persist)"]))
+            .subtitle(l.pick([
+                "/mnt/vendor/persist/skyward/logs，重启后可用文件管理器打开",
+                "/mnt/vendor/persist/skyward/logs，重新啟動後可用檔案管理員開啟",
+                "/mnt/vendor/persist/skyward/logs, which a file manager opens after a restart",
+            ]))
             .trail(Trail::Check(s.logs_to == 0)),
         Row::new(place_name(l, Place::Storage)).subtitle(storage).trail(Trail::Check(s.logs_to == 1)),
     ]);
     out.extend(hits(&places.rows, &[Action::LogsTo(0), Action::LogsTo(1)]));
     let note = l.pick([
-        "每次导出保存在以导出时间命名的文件夹中。重启后将清空临时文件夹。",
-        "每次匯出儲存在以匯出時間命名的資料夾中。重新啟動後將清空暫存資料夾。",
-        "Each export goes in a folder named by when it was made. A reboot empties the temporary folder.",
+        "每次导出保存在以导出时间命名的文件夹中，重启后仍保留；persist 未挂载时改存临时文件夹，重启即清空。",
+        "每次匯出儲存在以匯出時間命名的資料夾中，重新啟動後仍保留；persist 未掛載時改存暫存資料夾，重新啟動即清空。",
+        "Each export goes in a folder named by when it was made, and outlasts a restart; with persist unmounted it goes to the temporary folder, which a restart empties.",
     ]);
     let y = widgets::footnote(&mut c, t, f, places.bottom, note);
     let export = widgets::button(&mut c, t, f, y + t.m.dp(24.0), l.pick(["导出", "匯出", "Export"]));

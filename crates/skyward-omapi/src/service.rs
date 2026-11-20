@@ -41,7 +41,13 @@ const CONNECTS_IN: Duration = Duration::from_secs(5);
 const EMBEDDED: &str = "eSE";
 
 fn io(e: impl std::fmt::Display) -> Refusal {
-    Refusal::service(IO_ERROR, e.to_string())
+    // The program that asked is told the number, the same one Android's own
+    // service gives it; the reason is kept nowhere else, and a weaver that
+    // cannot reach its element is worth more than a bare 1 in the kernel
+    // log.
+    let said = e.to_string();
+    let _ = skyward_sys::kmsg(&format!("omapi: {said}"));
+    Refusal::service(IO_ERROR, said)
 }
 
 fn refused(r: Refused) -> Refusal {
@@ -264,7 +270,32 @@ impl Terminal {
 
 /// The service, as the service directory hands it out.
 struct Service {
-    terminals: Vec<Arc<Terminal>>,
+    /// What the service hands out, which the secure elements' own objects
+    /// are kept in.
+    objects: Arc<Objects<Binder>>,
+    /// One for each secure element whose own service has registered. A
+    /// phone's program registers its service and only then starts the chip
+    /// under it, so one that registers after the service was told of the
+    /// readers is taken in too.
+    terminals: Mutex<Vec<Arc<Terminal>>>,
+}
+
+impl Service {
+    /// The secure elements whose own service has registered, the embedded
+    /// ones first, as a program that asks for a reader is shown them. One
+    /// that registered since the service started is taken in as it is
+    /// found, and picks up where its own service is when first asked.
+    fn terminals(&self, binder: &Binder) -> Vec<Arc<Terminal>> {
+        let mut known = self.terminals.lock().expect("nothing panics while the secure elements served are held");
+        if let Ok(names) = element_names(binder) {
+            for name in names {
+                if !known.iter().any(|terminal| terminal.name == name) {
+                    known.push(Terminal::new(&name, &self.objects));
+                }
+            }
+        }
+        known.clone()
+    }
 }
 
 impl Object<Binder> for Service {
@@ -280,21 +311,23 @@ impl Object<Binder> for Service {
         HASH
     }
 
-    fn call(&self, _with: &Binder, code: u32, read: &mut Reader) -> Result<Option<Parcel>, Refusal> {
+    fn call(&self, with: &Binder, code: u32, read: &mut Reader) -> Result<Option<Parcel>, Refusal> {
         const GET_READERS: u32 = 1;
         const GET_READER: u32 = 2;
         const IS_NFC_EVENT_ALLOWED: u32 = 3;
         Ok(Some(match code {
             GET_READERS => {
-                let names: Vec<&str> = self.terminals.iter().map(|t| t.name.as_str()).collect();
+                let names: Vec<String> = self.terminals(with).into_iter().map(|terminal| terminal.name.clone()).collect();
+                let shown: Vec<&str> = names.iter().map(String::as_str).collect();
                 let mut reply = status::went_through();
-                reply.strings(&names);
+                reply.strings(&shown);
                 reply
             }
             GET_READER => {
                 let name = read.string().map_err(|e| Refusal::illegal_argument(format!("{e:#}")))?;
-                let terminal = self.terminals.iter().find(|t| t.name == name).ok_or_else(|| Refusal::illegal_argument(format!("Reader: {name} not supported")))?;
-                hands(Some(terminal.objects.lend(Arc::new(Read { terminal: terminal.clone() }))))
+                let terminals = self.terminals(with);
+                let terminal = terminals.iter().find(|t| t.name == name).ok_or_else(|| Refusal::illegal_argument(format!("Reader: {name} not supported")))?;
+                hands(Some(self.objects.lend(Arc::new(Read { terminal: terminal.clone() }))))
             }
             // Which apps may hear of what the secure element does over NFC
             // is told from rules a recovery, which runs no app, does not
@@ -573,6 +606,16 @@ impl Object<Binder> for Channel {
 /// awaited on the thread that made it, so one is never enough.
 const THREADS: usize = 2;
 
+/// The names of the secure elements whose own service has registered now,
+/// the embedded ones first, as Android shows them.
+fn element_names(binder: &Binder) -> Result<Vec<String>> {
+    let prefix = format!("{}/", element::INTERFACE);
+    let mut names: Vec<String> =
+        skyward_binder::service::names(binder)?.into_iter().filter_map(|name| name.strip_prefix(&prefix).map(str::to_string)).collect();
+    names.sort_by_key(|name| (!name.starts_with(EMBEDDED), name.clone()));
+    Ok(names)
+}
+
 /// Serve the secure element service for as long as the program runs, and
 /// register it with the service directory: one reader for each secure
 /// element whose own service is registered now, the embedded ones first.
@@ -590,9 +633,7 @@ pub fn start() -> Result<Vec<String>> {
             })
             .context("start a thread to take the secure element service's calls")?;
     }
-    let prefix = format!("{}/", element::INTERFACE);
-    let mut names: Vec<String> = skyward_binder::service::names(&binder)?.into_iter().filter_map(|name| name.strip_prefix(&prefix).map(str::to_string)).collect();
-    names.sort_by_key(|name| (!name.starts_with(EMBEDDED), name.clone()));
+    let names = element_names(&binder)?;
     let terminals: Vec<Arc<Terminal>> = names.iter().map(|name| Terminal::new(name, &objects)).collect();
     for terminal in &terminals {
         // A secure element that does not connect now is asked again when
@@ -601,7 +642,7 @@ pub fn start() -> Result<Vec<String>> {
             let _ = skyward_sys::kmsg(&format!("omapi: {e:#}"));
         }
     }
-    let service = objects.keep(Arc::new(Service { terminals }));
+    let service = objects.keep(Arc::new(Service { objects: objects.clone(), terminals: Mutex::new(terminals) }));
     skyward_binder::service::add(&binder, crate::SERVICE, service)?;
     Ok(names)
 }

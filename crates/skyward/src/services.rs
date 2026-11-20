@@ -25,6 +25,10 @@ const RESTART_DELAY: Duration = Duration::from_secs(1);
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const READY_POLL: Duration = Duration::from_millis(100);
 
+/// How many lines of what a program says of itself are kept in the kernel
+/// log before the rest is let go.
+const SERVICE_SAYS: usize = 64;
+
 /// Where the kernel says the highest capability it knows.
 const CAP_LAST_CAP: &str = "/proc/sys/kernel/cap_last_cap";
 
@@ -375,10 +379,29 @@ fn supervise(s: &Service, who: &Credentials, given: &Given) -> ! {
 /// Start the program and wait for it to end.
 fn run(s: &Service, who: &Credentials, given: &Given) -> Result<String> {
     let handed = given.make()?;
-    let mut child = command(s, who, given, &handed).spawn().with_context(|| format!("start {}", s.path))?;
+    let mut cmd = command(s, who, given, &handed);
+    // A program that cannot start says why to its error stream, which init
+    // leaves to the kernel log; the recovery keeps it the same way, so a
+    // service that turns every call down can be asked what it said.
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd.spawn().with_context(|| format!("start {}", s.path))?;
     // The program has its sockets now, and as init does, the recovery
     // keeps none of them open itself.
     drop(handed);
+    if let Some(err) = child.stderr.take() {
+        let name = s.path.clone();
+        let _ = std::thread::Builder::new().name("service-log".into()).spawn(move || {
+            use std::io::BufRead;
+            let mut said = 0;
+            for line in std::io::BufReader::new(err).lines().map_while(|l| l.ok()) {
+                if said >= SERVICE_SAYS {
+                    break;
+                }
+                said += 1;
+                let _ = skyward_sys::kmsg(&format!("{name}: {line}"));
+            }
+        });
+    }
     let status = child.wait().context("wait for it")?;
     Ok(format!("pid {} ended: {status}", child.id()))
 }
