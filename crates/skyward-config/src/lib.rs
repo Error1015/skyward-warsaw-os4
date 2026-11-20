@@ -765,11 +765,10 @@ mod tests {
 
     #[test]
     fn the_phone_names_the_stock_build_its_recovery_is_made_on() {
-        for (text, version) in [(include_str!("../../../devices/warsaw.toml"), "OS4.0.8.0.XHPCNXM")] {
-            let stock = DeviceConfig::parse(text).unwrap().stock.expect("a stock build to build on");
-            assert_eq!(stock.version, version);
-            assert!(stock.package.ends_with(".zip") && stock.package.contains(&format!("/{version}/")), "{}", stock.package);
-        }
+        let version = "OS4.0.8.0.XHPCNXM";
+        let stock = DeviceConfig::parse(include_str!("../../../devices/warsaw.toml")).unwrap().stock.expect("a stock build to build on");
+        assert_eq!(stock.version, version);
+        assert!(stock.package.ends_with(".zip") && stock.package.contains(&format!("/{version}/")), "{}", stock.package);
     }
 
     #[test]
