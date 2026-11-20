@@ -853,11 +853,6 @@ fn open_secure_devices() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "android"))]
-fn open_secure_devices() -> Result<()> {
-    Ok(())
-}
-
 /// Set each of [`BUILD_VERSION`] to the installed system's value. An earlier
 /// run of the recovery service may have set it already, and init sets such
 /// a property only once.
