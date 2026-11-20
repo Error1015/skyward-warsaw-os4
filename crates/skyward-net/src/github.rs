@@ -93,7 +93,13 @@ pub fn newest(answer: &str, codename: &str, running: &str) -> Result<Newest> {
     // never taken.
     let start = format!("skyward-{tag}");
     let named = |name: &str| {
-        name.ends_with(".zip") && name.strip_prefix(&start).is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+        match name.strip_prefix(&start) {
+            // The fork's: the tag, then the name of the file itself.
+            Some(".zip") => true,
+            // Upstream's: the tag, then the phone and the stock build.
+            Some(rest) => rest.starts_with('-') && name.ends_with(".zip"),
+            None => false,
+        }
     };
     let zips: Vec<Asset> = release.assets.into_iter().filter(|a| named(&a.name)).collect();
     let own = format!("skyward-{tag}-{codename}-");
