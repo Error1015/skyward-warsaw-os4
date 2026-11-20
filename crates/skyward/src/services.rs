@@ -392,12 +392,10 @@ fn run(s: &Service, who: &Credentials, given: &Given) -> Result<String> {
         let name = s.path.clone();
         let _ = std::thread::Builder::new().name("service-log".into()).spawn(move || {
             use std::io::BufRead;
-            let mut said = 0;
-            for line in std::io::BufReader::new(err).lines().map_while(|l| l.ok()) {
+            for (said, line) in std::io::BufReader::new(err).lines().map_while(|l| l.ok()).enumerate() {
                 if said >= SERVICE_SAYS {
                     break;
                 }
-                said += 1;
                 let _ = skyward_sys::kmsg(&format!("{name}: {line}"));
             }
         });
